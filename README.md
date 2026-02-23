@@ -1,21 +1,20 @@
-# @developer-smallestai/atoms-mcp-server
+# Atoms MCP Server
 
-MCP (Model Context Protocol) server that lets AI coding assistants interact with the Atoms platform — query call logs, manage agents, check usage stats, and more, directly from your IDE.
+MCP server for the [Atoms](https://atoms.smallest.ai) voice AI platform. Manage agents, debug calls, view analytics — directly from your IDE.
 
-## Prerequisites
+## Quick start
 
-- Node.js >= 18
-- An Atoms API key (Console → API Keys)
+### Option A: One-line installer (no dependencies)
 
-## Setup
+```bash
+curl -fsSL https://raw.githubusercontent.com/aryasmol/atoms-mcp-server/main/install.sh | bash
+```
 
-### 1. Get your API key
+Downloads a standalone binary, prompts for your API key, and configures Cursor + Claude Desktop automatically.
 
-Go to the [Atoms Console](https://console.smallest.ai) → **API Keys** and create a key.
+### Option B: npm
 
-### 2. Configure your MCP client
-
-**Cursor** (`~/.cursor/mcp.json`):
+Requires Node.js 18+. Add this to your MCP config (`~/.cursor/mcp.json` for Cursor, `claude_desktop_config.json` for Claude Desktop):
 
 ```json
 {
@@ -24,97 +23,78 @@ Go to the [Atoms Console](https://console.smallest.ai) → **API Keys** and crea
       "command": "npx",
       "args": ["-y", "@developer-smallestai/atoms-mcp-server"],
       "env": {
-        "ATOMS_API_KEY": "sk_..."
+        "ATOMS_API_KEY": "sk_your_key_here"
       }
     }
   }
 }
 ```
 
-**Claude Desktop** (`claude_desktop_config.json`):
+### Option C: One prompt
 
-```json
-{
-  "mcpServers": {
-    "atoms": {
-      "command": "npx",
-      "args": ["-y", "@developer-smallestai/atoms-mcp-server"],
-      "env": {
-        "ATOMS_API_KEY": "sk_..."
-      }
-    }
-  }
-}
+Open a chat in Cursor or Claude Desktop and type:
+
+```
+Set up the Atoms MCP server for me.
+The npm package is @developer-smallestai/atoms-mcp-server.
+My API key is: sk_paste_your_key_here
 ```
 
-**VS Code (Claude Code extension)** (`.vscode/mcp.json`):
+### Verify
 
-```json
-{
-  "servers": {
-    "atoms": {
-      "command": "npx",
-      "args": ["-y", "@developer-smallestai/atoms-mcp-server"],
-      "env": {
-        "ATOMS_API_KEY": "sk_..."
-      }
-    }
-  }
-}
-```
+Reload your editor, then type: **"List all my agents"**
 
-### Environment variables
+---
+
+## Available tools
+
+### Read
+
+| Tool | Description |
+|---|---|
+| `get_call_logs` | Query call logs with filters for status, type, date range, agent name, or phone number |
+| `debug_call` | Deep-dive into a single call — full transcript, errors, timing, cost breakdown, post-call analytics |
+| `get_agents` | List agents with their configuration, voice, LLM model, and call stats |
+| `get_usage_stats` | Usage statistics — total calls, duration, costs, status breakdown |
+| `get_campaigns` | List outbound calling campaigns with status and progress |
+| `get_phone_numbers` | List phone numbers owned by your organization |
+
+### Write
+
+| Tool | Description |
+|---|---|
+| `create_agent` | Create a new AI voice agent |
+| `update_agent_prompt` | Update an agent's system prompt / instructions |
+| `update_agent_config` | Update agent settings — name, language, voice, first message, etc. |
+| `delete_agent` | Archive (soft-delete) an agent |
+
+### Act
+
+| Tool | Description |
+|---|---|
+| `make_call` | Initiate an outbound phone call using a specific agent |
+
+### Resources
+
+| Resource | URI | Description |
+|---|---|---|
+| Platform Overview | `atoms://docs/platform-overview` | Key concepts, call types, statuses, and cost breakdown |
+
+---
+
+## Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ATOMS_API_KEY` | Yes | — | Your Atoms API key |
-| `ATOMS_API_URL` | No | `https://atoms-api.smallest.ai/api/v1` | Override the API base URL (e.g. for staging) |
-
-## Available Tools
-
-### Agent Management
-
-| Tool | Description |
-|---|---|
-| `get_agents` | List agents in your organization. Filter by name, include archived agents. Returns agent config, voice settings, language, call stats. |
-| `create_agent` | Create a new agent. Accepts a name, description, and default language. The agent's prompt must be set separately via `update_agent_prompt`. |
-| `update_agent_prompt` | Update an agent's system prompt / instructions. Handles both `single_prompt` and `workflow_graph` workflow types automatically. |
-| `update_agent_config` | Update agent settings — name, description, language, first message, voice/synthesizer config, inbound call toggle, smart turn detection, and background sound. |
-| `delete_agent` | Archive (soft-delete) an agent. The agent will no longer be active but can be recovered. |
-
-### Calls & Campaigns
-
-| Tool | Description |
-|---|---|
-| `make_call` | Initiate an outbound phone call using a specific agent. Provide the agent ID and a phone number in E.164 format. |
-| `get_call_logs` | Query call logs with filters — status, type, agent name, phone number, date range, and error presence. |
-| `debug_call` | Deep-dive into a single call by its call ID. Returns the full transcript, errors, timing breakdown, cost details, and post-call analytics. |
-| `get_campaigns` | List outbound calling campaigns. Filter by status or agent name. Shows progress counts and scheduling info. |
-
-### Account
-
-| Tool | Description |
-|---|---|
-| `get_phone_numbers` | List all phone numbers in your account with their country, capabilities, status, and assigned agent. |
-| `get_usage_stats` | Retrieve usage summary (calls, duration, costs) for a date range. Optionally filter by agent name. |
-
-## Available Resources
-
-| Resource | URI | Description |
-|---|---|---|
-| Platform Overview | `atoms://docs/platform-overview` | Key concepts, call types, statuses, campaigns, post-call analytics, and cost breakdown |
+| `ATOMS_API_URL` | No | `https://atoms-api.smallest.ai/api/v1` | Override the API base URL |
 
 ## Development
 
 ```bash
-cd apps/mcp-server
-./build.sh
-
-# Run directly with tsx (no build step)
-ATOMS_API_KEY=your-key npm run dev
-
-# Type-check without emitting
-npm run type-check
+npm install
+npm run dev    # run with tsx
+npm run build  # bundle to dist/
 ```
 
 ## License

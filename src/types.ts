@@ -1,16 +1,9 @@
 /**
  * Local type definitions for the MCP server.
- *
- * These mirror the shapes from @repo/atoms-types but without importing from it
- * directly, which avoids pulling in mongoose and causing ts(2589) in the IDE.
- *
- * Contract tests (src/__tests__/contracts.test.ts) verify these stay in sync
- * with the real @repo/atoms-types interfaces — if the backend changes a field,
- * those tests fail in CI.
+ * These match the shapes returned by the Atoms platform API.
  */
 
 // ─── Agent Types ──────────────────────────────────────────────────────────────
-// Mirrors: IAgentDTO, LanguageConfig, SynthesizerConfig from @repo/atoms-types
 
 export interface LanguageConfig {
   default: string;
@@ -69,7 +62,6 @@ export interface IAgentDTO {
 }
 
 // ─── Campaign Types ───────────────────────────────────────────────────────────
-// Mirrors: ICampaignDTO from @repo/atoms-types
 
 export interface ICampaignDTO {
   _id: string;
