@@ -3,7 +3,7 @@ set -euo pipefail
 
 INSTALL_DIR="$HOME/.atoms"
 BIN_NAME="atoms-mcp"
-BASE_URL="https://github.com/aryasmol/atoms-mcp-server/releases/latest/download"
+BASE_URL="https://github.com/smallest-inc/mcp-server/releases/latest/download"
 
 print_step() { printf "\n\033[1;34m→\033[0m %s\n" "$1"; }
 print_ok()   { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
