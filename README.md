@@ -6,8 +6,14 @@ MCP server for the [Atoms](https://atoms.smallest.ai) voice AI platform. Manage 
 
 ### Option A: One-line installer (no dependencies)
 
+**Mac / Linux:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.ps1 | iex
 ```
 
 Downloads a standalone binary, prompts for your API key, and configures Cursor + Claude Desktop automatically.
