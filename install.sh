@@ -35,7 +35,7 @@ get_api_key() {
   fi
 
   printf "\n  Enter your Atoms API key (from console.smallest.ai → API Keys): "
-  read -r ATOMS_API_KEY
+  read -r ATOMS_API_KEY < /dev/tty
 
   if [ -z "$ATOMS_API_KEY" ]; then
     print_err "API key is required."
@@ -65,54 +65,47 @@ download_binary() {
   print_ok "Installed to ${dest}"
 }
 
-configure_cursor() {
-  local config_dir config_file
-  config_dir="$HOME/.cursor"
-  config_file="${config_dir}/mcp.json"
+upsert_json_config() {
+  local config_file="$1"
+  local bin_path="${INSTALL_DIR}/${BIN_NAME}"
 
+  python3 -c "
+import json, sys, os
+
+path = sys.argv[1]
+cmd  = sys.argv[2]
+key  = sys.argv[3]
+
+atoms_entry = {
+    'command': cmd,
+    'env': {'ATOMS_API_KEY': key}
+}
+
+if os.path.isfile(path) and os.path.getsize(path) > 0:
+    with open(path) as f:
+        try:
+            cfg = json.load(f)
+        except json.JSONDecodeError:
+            cfg = {}
+else:
+    cfg = {}
+
+cfg.setdefault('mcpServers', {})
+cfg['mcpServers']['atoms'] = atoms_entry
+
+with open(path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+" "$config_file" "$bin_path" "$ATOMS_API_KEY"
+}
+
+configure_cursor() {
+  local config_dir="$HOME/.cursor"
+  local config_file="${config_dir}/mcp.json"
   mkdir -p "$config_dir"
 
-  if [ -f "$config_file" ]; then
-    if grep -q '"atoms"' "$config_file" 2>/dev/null; then
-      print_ok "Cursor config already has atoms entry — updating API key"
-      local tmp
-      tmp=$(mktemp)
-      sed "s|ATOMS_API_KEY.*|ATOMS_API_KEY\": \"${ATOMS_API_KEY}\"|" "$config_file" > "$tmp"
-      mv "$tmp" "$config_file"
-      return
-    fi
-
-    if grep -q '"mcpServers"' "$config_file" 2>/dev/null; then
-      local tmp
-      tmp=$(mktemp)
-      sed 's/"mcpServers"[[:space:]]*:[[:space:]]*{/"mcpServers": {\
-    "atoms": {\
-      "command": "INSTALL_DIR_PLACEHOLDER\/atoms-mcp",\
-      "env": {\
-        "ATOMS_API_KEY": "API_KEY_PLACEHOLDER"\
-      }\
-    },/' "$config_file" \
-        | sed "s|INSTALL_DIR_PLACEHOLDER|${INSTALL_DIR}|g" \
-        | sed "s|API_KEY_PLACEHOLDER|${ATOMS_API_KEY}|g" > "$tmp"
-      mv "$tmp" "$config_file"
-      print_ok "Added atoms to existing Cursor config"
-      return
-    fi
-  fi
-
-  cat > "$config_file" << JSONEOF
-{
-  "mcpServers": {
-    "atoms": {
-      "command": "${INSTALL_DIR}/atoms-mcp",
-      "env": {
-        "ATOMS_API_KEY": "${ATOMS_API_KEY}"
-      }
-    }
-  }
-}
-JSONEOF
-  print_ok "Created Cursor config at ${config_file}"
+  upsert_json_config "$config_file"
+  print_ok "Cursor config ready at ${config_file}"
 }
 
 configure_claude() {
@@ -127,28 +120,8 @@ configure_claude() {
   config_file="${config_dir}/claude_desktop_config.json"
   mkdir -p "$config_dir"
 
-  if [ -f "$config_file" ] && grep -q '"atoms"' "$config_file" 2>/dev/null; then
-    print_ok "Claude Desktop config already has atoms entry"
-    return
-  fi
-
-  if [ ! -f "$config_file" ] || [ ! -s "$config_file" ]; then
-    cat > "$config_file" << JSONEOF
-{
-  "mcpServers": {
-    "atoms": {
-      "command": "${INSTALL_DIR}/atoms-mcp",
-      "env": {
-        "ATOMS_API_KEY": "${ATOMS_API_KEY}"
-      }
-    }
-  }
-}
-JSONEOF
-    print_ok "Created Claude Desktop config at ${config_file}"
-  else
-    print_ok "Claude Desktop config exists — add atoms manually if needed"
-  fi
+  upsert_json_config "$config_file"
+  print_ok "Claude Desktop config ready at ${config_file}"
 }
 
 main() {
