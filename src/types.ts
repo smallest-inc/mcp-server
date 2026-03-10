@@ -57,6 +57,7 @@ export interface IAgentDTO {
   redactionConfig: {
     isEnabled: boolean;
   };
+  defaultVariables?: Record<string, unknown>;
   totalCalls?: number;
   globalPrompt?: string;
 }
