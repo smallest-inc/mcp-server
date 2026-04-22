@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - "*.md"
       - ".github/workflows/ci.yml"
+      - ".github/CODEOWNERS"
 
 permissions:
   contents: write
@@ -15,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.bump.outputs.version }}
       skipped: ${{ steps.bump.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
@@ -25,12 +27,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: Bump version and tag
+      - name: Compute next version and tag
         id: bump
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
           # Check if the latest commit already has a version tag
           EXISTING_TAG=$(git tag --points-at HEAD | grep '^v' || true)
           if [ -n "$EXISTING_TAG" ]; then
@@ -39,15 +38,17 @@ jobs:
             exit 0
           fi
 
-          # Determine bump type from commit messages since last tag
+          # Get last tag to determine base version
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$LAST_TAG" ]; then
             COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"%s")
+            BASE_VERSION="${LAST_TAG#v}"
           else
             COMMITS=$(git log --pretty=format:"%s")
+            BASE_VERSION="0.0.0"
           fi
 
-          # new tool/resource = minor, breaking change = major, else patch
+          # Determine bump type: new tool/resource = minor, breaking = major, else patch
           if echo "$COMMITS" | grep -qiE "^feat(\(.*\))?!:|^BREAKING CHANGE"; then
             BUMP="major"
           elif echo "$COMMITS" | grep -qiE "new tool|new resource|add.*tool|add.*resource"; then
@@ -56,17 +57,26 @@ jobs:
             BUMP="patch"
           fi
 
-          echo "Bump type: $BUMP"
-          npm version "$BUMP" --no-git-tag-version
-          VERSION=$(node -p "require('./package.json').version")
+          # Compute next version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
           TAG="v${VERSION}"
 
-          git add package.json
-          git commit -m "chore: bump version to ${VERSION}"
+          echo "Bump type: $BUMP ($BASE_VERSION → $VERSION)"
+
+          # Create a lightweight tag (no commit needed)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$TAG"
-          git push origin main --tags
+          git push origin "$TAG"
 
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "skipped=false" >> "$GITHUB_OUTPUT"
 
   build:
@@ -86,8 +96,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -125,8 +133,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -147,13 +153,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+
+      - name: Set version in package.json
+        run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
 
       - run: npm install
       - run: npm run build
