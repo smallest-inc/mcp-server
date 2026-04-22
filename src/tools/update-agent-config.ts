@@ -9,15 +9,18 @@ export function registerUpdateAgentConfig(server: McpServer) {
     "update_agent_config",
     {
       description:
-        "Update an agent's configuration (name, language, first message, voice settings, model, variables, etc.). Only provided fields are updated. To update the agent's prompt/instructions, use update_agent_prompt instead.",
+        "Update an agent's configuration (name, language, first message, voice settings, model, variables, etc.). Only provided fields are updated. To update the agent's prompt/instructions, use update_agent_prompt instead. Note: if the agent has versioning enabled, only metadata fields (name, description, allowInboundCall) can be updated via this endpoint.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         name: z.string().optional().describe("New agent name"),
         description: z.string().optional().describe("Agent description"),
         language: z
           .object({
-            default: z.string().optional().describe("Default language code (e.g. en, hi)"),
-            supported: z.array(z.string()).optional().describe("List of supported language codes"),
+            default: z.enum(["en", "hi", "mr", "gu", "ta", "es"]).optional().describe("Default language code"),
+            supported: z
+              .array(z.enum(["en", "hi", "mr", "gu", "ta", "es"]))
+              .optional()
+              .describe("List of supported language codes. Note: Tamil cannot be combined with other languages."),
             switching_enabled: z
               .boolean()
               .optional()
@@ -25,13 +28,26 @@ export function registerUpdateAgentConfig(server: McpServer) {
           })
           .optional()
           .describe("Language configuration"),
-        first_message: z.string().optional().describe("First message when call starts (max 500 chars)"),
+        first_message: z
+          .string()
+          .optional()
+          .describe("First message when call starts (max 500 chars)"),
         synthesizer: z
           .object({
             voiceConfig: z
               .object({
                 model: z
-                  .enum(["waves", "waves_lightning_large", "waves_lightning_large_voice_clone"])
+                  .enum([
+                    "waves",
+                    "waves_lightning_large",
+                    "waves_lightning_v2",
+                    "waves_lightning_v3_1",
+                    "waves_lightning_v3",
+                    "waves_lightning_v2_http",
+                    "gpt-realtime",
+                    "gpt-realtime-mini",
+                    "other",
+                  ])
                   .describe("Voice model"),
                 voiceId: z.string().describe("Voice ID (e.g. rachel, nyah, etc.)"),
               })
@@ -40,28 +56,119 @@ export function registerUpdateAgentConfig(server: McpServer) {
             speed: z.number().optional().describe("Voice speed (0-2)"),
             consistency: z.number().optional().describe("Voice consistency (0-1)"),
             similarity: z.number().optional().describe("Voice similarity (0-1)"),
+            enhancement: z.number().optional().describe("Voice enhancement (0, 1, or 2)"),
+            sampleRate: z.number().optional().describe("Audio sample rate (8000, 16000, 24000, or 44100)"),
           })
           .optional()
           .describe("Voice synthesizer configuration"),
         slm_model: z
-          .enum(["electron", "gpt-4o", "gpt-4.1"])
+          .enum(["electron", "electron-kogta", "gpt-4o", "gpt-4.1", "gpt-5.2", "gpt-realtime-mini", "gpt-realtime"])
           .optional()
           .describe("Inference LLM model for the agent"),
+        global_prompt: z
+          .string()
+          .optional()
+          .describe("Global system prompt for the agent (max 4000 chars). This is separate from the workflow prompt updated via update_agent_prompt."),
         default_variables: z
-          .record(z.string(), z.unknown())
+          .record(z.string(), z.string())
           .optional()
           .describe(
-            "Default variables for the agent. These are used when no per-call variables are provided. Example: { prospect_name: 'Default', company: 'Acme' }"
+            "Default variables for the agent prompt. Example: { prospect_name: 'Default', company: 'Acme' }"
           ),
+        knowledge_base_id: z
+          .string()
+          .optional()
+          .describe("Knowledge base ID to attach to the agent"),
         allow_inbound_call: z.boolean().optional().describe("Whether to allow inbound calls"),
+        allow_interruptions: z.boolean().optional().describe("Whether to allow user interruptions"),
+        wait_for_user_to_speak_first: z
+          .boolean()
+          .optional()
+          .describe("Wait for user to speak before agent starts"),
+        mute_user_until_first_bot_response: z
+          .boolean()
+          .optional()
+          .describe("Mute user audio until the bot sends its first response"),
+        interruption_backoff_timer: z
+          .number()
+          .optional()
+          .describe("Delay in seconds before agent resumes after interruption (0-10)"),
         smart_turn_config: z
           .object({
             isEnabled: z.boolean().optional(),
-            waitTimeInSecs: z.number().optional(),
+            waitTimeInSecs: z.number().optional().describe("Wait time in seconds (0-10)"),
           })
           .optional()
           .describe("Smart turn detection configuration"),
-        background_sound: z.string().optional().describe("Background sound option"),
+        voice_detection_config: z
+          .object({
+            confidence: z.number().optional().describe("Voice detection confidence threshold (0-1)"),
+            minVolume: z.number().optional().describe("Minimum volume threshold (0-1)"),
+            triggerTimeInSecs: z.number().optional().describe("Trigger time in seconds (0-10)"),
+            releaseTimeInSecs: z.number().optional().describe("Release time in seconds (0-10)"),
+          })
+          .optional()
+          .describe("Voice activity detection configuration"),
+        voicemail_detection: z
+          .object({
+            enabled: z.boolean().optional().describe("Enable voicemail detection"),
+            endText: z
+              .string()
+              .optional()
+              .describe("Message to say before hanging up on voicemail (max 200 chars)"),
+          })
+          .optional()
+          .describe("Voicemail detection configuration"),
+        denoising_config: z
+          .object({
+            isEnabled: z.boolean().optional().describe("Enable audio denoising"),
+          })
+          .optional()
+          .describe("Audio denoising configuration"),
+        llm_idle_timeout_config: z
+          .object({
+            chatTimeoutTimeInSecs: z.number().optional().describe("Chat idle timeout (1-300 seconds)"),
+            webcallTimeoutTimeInSecs: z.number().optional().describe("Webcall idle timeout (1-300 seconds)"),
+            telephonyTimeoutTimeInSecs: z.number().optional().describe("Telephony idle timeout (1-300 seconds)"),
+            maxRetries: z.number().optional().describe("Max retries before hanging up (1-10)"),
+          })
+          .optional()
+          .describe("LLM idle timeout configuration per call type"),
+        session_timeout_config: z
+          .object({
+            timeoutTimeInSecs: z.number().optional().describe("Max session duration (300-43200 seconds)"),
+          })
+          .optional()
+          .describe("Session timeout configuration"),
+        background_sound: z
+          .enum(["", "office", "cafe", "call_center", "static"])
+          .optional()
+          .describe("Background sound option"),
+        speech_formatting: z.boolean().optional().describe("Enable speech formatting"),
+        pronunciation_dicts: z
+          .array(
+            z.object({
+              word: z.string().describe("The word to customize pronunciation for"),
+              pronunciation: z.string().describe("How the word should be pronounced"),
+            })
+          )
+          .optional()
+          .describe("Custom pronunciation dictionary"),
+        redaction_config: z
+          .object({
+            isEnabled: z.boolean().describe("Enable PII redaction in transcripts"),
+          })
+          .optional()
+          .describe("Redaction configuration"),
+        call_disposition_config: z
+          .string()
+          .optional()
+          .describe("Call disposition configuration prompt"),
+        enable_style_guide: z.boolean().optional().describe("Enable conversational style guide"),
+        telephony_product_ids: z
+          .array(z.string())
+          .optional()
+          .describe("List of telephony product IDs (phone numbers) to assign to this agent"),
       },
     },
     async (params) => {
@@ -90,20 +197,50 @@ export function registerUpdateAgentConfig(server: McpServer) {
       if (params.description !== undefined) body.description = params.description;
       if (params.first_message !== undefined) body.firstMessage = params.first_message;
       if (params.allow_inbound_call !== undefined) body.allowInboundCall = params.allow_inbound_call;
+      if (params.allow_interruptions !== undefined) body.allowInterruptions = params.allow_interruptions;
+      if (params.wait_for_user_to_speak_first !== undefined)
+        body.waitForUserToSpeakFirst = params.wait_for_user_to_speak_first;
+      if (params.mute_user_until_first_bot_response !== undefined)
+        body.muteUserUntilFirstBotResponse = params.mute_user_until_first_bot_response;
+      if (params.interruption_backoff_timer !== undefined)
+        body.interruptionBackoffTimer = params.interruption_backoff_timer;
       if (params.smart_turn_config !== undefined) body.smartTurnConfig = params.smart_turn_config;
+      if (params.voice_detection_config !== undefined) body.voiceDetectionConfig = params.voice_detection_config;
+      if (params.voicemail_detection !== undefined) body.voiceMailDetectionConfig = params.voicemail_detection;
+      if (params.denoising_config !== undefined) body.denoisingConfig = params.denoising_config;
       if (params.background_sound !== undefined) body.backgroundSound = params.background_sound;
+      if (params.speech_formatting !== undefined) body.speechFormatting = params.speech_formatting;
       if (params.slm_model !== undefined) body.slmModel = params.slm_model;
+      if (params.global_prompt !== undefined) body.globalPrompt = params.global_prompt;
       if (params.default_variables !== undefined) body.defaultVariables = params.default_variables;
+      if (params.knowledge_base_id !== undefined) body.globalKnowledgeBaseId = params.knowledge_base_id;
+      if (params.pronunciation_dicts !== undefined) body.pronunciationDicts = params.pronunciation_dicts;
+      if (params.redaction_config !== undefined) body.redactionConfig = params.redaction_config;
+      if (params.call_disposition_config !== undefined) body.callDispositionConfig = params.call_disposition_config;
+      if (params.enable_style_guide !== undefined) body.enableStyleGuide = params.enable_style_guide;
+      if (params.telephony_product_ids !== undefined) body.telephonyProductId = params.telephony_product_ids;
+      if (params.llm_idle_timeout_config !== undefined) body.llmIdleTimeoutConfig = params.llm_idle_timeout_config;
+      if (params.session_timeout_config !== undefined) body.sessionTimeoutConfig = params.session_timeout_config;
 
-      // Language must be sent as a nested object
+      // Language must be sent as a nested object.
+      // The switching sub-object requires ALL fields (no defaults in update schema),
+      // so merge with the agent's current switching config to preserve existing values.
       if (params.language !== undefined) {
+        const currentSwitching = agent.language?.switching;
+
         body.language = {
-          default: params.language.default,
+          default: params.language.default ?? agent.language?.default,
           supported:
-            params.language.supported ?? (params.language.default ? [params.language.default] : undefined),
-          ...(params.language.switching_enabled !== undefined && {
-            switching: { isEnabled: params.language.switching_enabled },
-          }),
+            params.language.supported ??
+            (params.language.default ? [params.language.default] : agent.language?.supported),
+          switching: {
+            isEnabled: params.language.switching_enabled ?? currentSwitching?.isEnabled ?? false,
+            minWordsForDetection: currentSwitching?.minWordsForDetection ?? 2,
+            strongSignalThreshold: currentSwitching?.strongSignalThreshold ?? 0.7,
+            weakSignalThreshold: currentSwitching?.weakSignalThreshold ?? 0.3,
+            minConsecutiveForWeakThresholdSwitch:
+              currentSwitching?.minConsecutiveForWeakThresholdSwitch ?? 2,
+          },
         };
       }
 
@@ -118,6 +255,8 @@ export function registerUpdateAgentConfig(server: McpServer) {
             consistency: params.synthesizer.consistency,
           }),
           ...(params.synthesizer.similarity !== undefined && { similarity: params.synthesizer.similarity }),
+          ...(params.synthesizer.enhancement !== undefined && { enhancement: params.synthesizer.enhancement }),
+          ...(params.synthesizer.sampleRate !== undefined && { sampleRate: params.synthesizer.sampleRate }),
         };
       }
 

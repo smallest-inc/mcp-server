@@ -9,13 +9,17 @@ export function registerUpdateAgentPrompt(server: McpServer) {
     "update_agent_prompt",
     {
       description:
-        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents.",
+        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents. Optionally update the first message too.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         prompt: z.string().describe("The new system prompt for the agent"),
+        first_message: z
+          .string()
+          .optional()
+          .describe("Update the first message the agent says when a call starts (max 500 chars)"),
       },
     },
-    async (params: { agent_id: string; prompt: string }) => {
+    async (params) => {
       // Step 1: Get the agent to find its workflowId and workflowType
       const agentResult = await atomsApi("GET", `/agent/${encodeURIComponent(params.agent_id)}`);
 
@@ -79,6 +83,7 @@ export function registerUpdateAgentPrompt(server: McpServer) {
         workflowData?.tools ??
         [];
 
+      // Update workflow prompt
       const result = await atomsApi("PATCH", `/workflow/${encodeURIComponent(workflowId)}`, {
         type: "single_prompt",
         singlePromptConfig: {
@@ -89,6 +94,33 @@ export function registerUpdateAgentPrompt(server: McpServer) {
 
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      }
+
+      // Optionally update first message on the agent config
+      if (params.first_message !== undefined) {
+        const firstMsgResult = await atomsApi(
+          "PATCH",
+          `/agent/${encodeURIComponent(params.agent_id)}`,
+          { firstMessage: params.first_message }
+        );
+        if (!firstMsgResult.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Agent prompt updated successfully, but failed to update first message: ${formatApiError(firstMsgResult)}`,
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Agent ${params.agent_id} prompt and first message updated successfully.`,
+            },
+          ],
+        };
       }
 
       return {
