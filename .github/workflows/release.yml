@@ -2,14 +2,58 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - ".github/workflows/ci.yml"
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      skipped: ${{ steps.bump.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bump version and tag
+        id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if the latest commit already has a version tag
+          EXISTING_TAG=$(git tag --points-at HEAD | grep '^v' || true)
+          if [ -n "$EXISTING_TAG" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "Already tagged: $EXISTING_TAG — skipping release."
+            exit 0
+          fi
+
+          npm version patch --no-git-tag-version
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+
+          git add package.json
+          git commit -m "chore: bump version to ${VERSION}"
+          git tag "$TAG"
+          git push origin main --tags
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
+    if: needs.version.outputs.skipped != 'true'
     strategy:
       matrix:
         include:
@@ -24,6 +68,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -57,10 +103,12 @@ jobs:
           path: dist/atoms-mcp-*
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -71,16 +119,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "MCP Server ${{ github.ref_name }}" \
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --title "MCP Server ${{ needs.version.outputs.tag }}" \
             --generate-notes \
             binaries/*
 
   publish-npm:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
