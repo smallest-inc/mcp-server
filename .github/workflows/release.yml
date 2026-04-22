@@ -175,4 +175,5 @@ jobs:
 
       - run: npm install
       - run: npm run build
+      # Trusted Publishing: authenticates via OIDC, no NPM_TOKEN needed
       - run: npm publish --access public --provenance
