@@ -39,7 +39,25 @@ jobs:
             exit 0
           fi
 
-          npm version patch --no-git-tag-version
+          # Determine bump type from commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"%s")
+          else
+            COMMITS=$(git log --pretty=format:"%s")
+          fi
+
+          # new tool/resource = minor, breaking change = major, else patch
+          if echo "$COMMITS" | grep -qiE "^feat(\(.*\))?!:|^BREAKING CHANGE"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qiE "new tool|new resource|add.*tool|add.*resource"; then
+            BUMP="minor"
+          else
+            BUMP="patch"
+          fi
+
+          echo "Bump type: $BUMP"
+          npm version "$BUMP" --no-git-tag-version
           VERSION=$(node -p "require('./package.json').version")
           TAG="v${VERSION}"
 
