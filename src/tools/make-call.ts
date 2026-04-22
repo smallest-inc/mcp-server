@@ -13,11 +13,11 @@ export function registerMakeCall(server: McpServer) {
       inputSchema: {
         agent_id: z.string().describe("The agent ID to use for the call"),
         phone_number: z.string().describe("Phone number to call in E.164 format (e.g. +14155551234)"),
-        from_number: z
+        from_product_id: z
           .string()
           .optional()
           .describe(
-            "Caller ID / from number in E.164 format. Must be a number owned by your org. If omitted, a default number is used."
+            "Telephony product ID to use as the caller ID. Must be a phone number product owned by your org. If omitted, a default number is used. Use get_phone_numbers to find available product IDs."
           ),
         variables: z
           .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
@@ -25,6 +25,10 @@ export function registerMakeCall(server: McpServer) {
           .describe(
             "Per-call variables to pass to the agent prompt (e.g. { prospect_name: 'John', prospect_company: 'Acme' }). These override the agent's defaultVariables for this call."
           ),
+        version_id: z
+          .string()
+          .optional()
+          .describe("Agent version ID to use for this call. If omitted, uses the agent's current live configuration."),
       },
     },
     async (params) => {
@@ -49,11 +53,14 @@ export function registerMakeCall(server: McpServer) {
         agentId: params.agent_id,
         phoneNumber: params.phone_number,
       };
-      if (params.from_number) {
-        body.fromProductId = params.from_number;
+      if (params.from_product_id) {
+        body.fromProductId = params.from_product_id;
       }
       if (params.variables) {
         body.variables = params.variables;
+      }
+      if (params.version_id) {
+        body.versionId = params.version_id;
       }
 
       const result = await atomsApi("POST", "/conversation/outbound", body);

@@ -8,7 +8,7 @@ export function registerGetPhoneNumbers(server: McpServer) {
     "get_phone_numbers",
     {
       description:
-        "List phone numbers acquired by your organization. Shows number, country, capabilities, and which agent it's assigned to.",
+        "List phone numbers acquired by your organization. Shows product ID (needed for make_call's from_product_id), number, country, provider, and which agent it's assigned to.",
       inputSchema: {},
     },
     async () => {
@@ -20,12 +20,14 @@ export function registerGetPhoneNumbers(server: McpServer) {
 
       const data = result.data?.data ?? result.data;
       const numbers = (Array.isArray(data) ? data : (data?.numbers ?? [])).map((n: IPhoneNumberEntry) => ({
+        productId: n._id,
+        productType: n.productType,
         phoneNumber: n.attributes?.phoneNumber ?? n.phoneNumber,
         country: n.attributes?.countryCode ?? n.country,
         provider: n.attributes?.provider,
         assignedAgentId: n.agentId ?? n.agent?._id,
+        assignedAgentName: n.agent?.name,
         isActive: n.isActive,
-        productType: n.productType,
       }));
 
       return {

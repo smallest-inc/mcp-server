@@ -9,7 +9,7 @@ export function registerGetCallLogs(server: McpServer) {
     "get_call_logs",
     {
       description:
-        "Get call logs for your organization. Filter by status, type, date range, agent name, or phone number. Returns call metadata, duration, cost, errors, and transcript summary.",
+        "Get call logs for your organization. Filter by status, type, date range, agent name, phone number, or campaign. Returns call metadata, duration, cost, and disconnection reasons.",
       inputSchema: {
         call_status: z
           .enum(["pending", "in_queue", "active", "completed", "failed", "no_answer", "busy", "cancelled"])
@@ -20,14 +20,16 @@ export function registerGetCallLogs(server: McpServer) {
           .optional()
           .describe("Filter by call type"),
         agent_name: z.string().optional().describe("Filter by agent name (partial match, case-insensitive)"),
+        campaign_id: z.string().optional().describe("Filter by campaign ID"),
         phone_number: z
           .string()
           .optional()
-          .describe("Filter by phone number (matches fromNumber or toNumber or userNumber)"),
+          .describe("Filter by phone number (client-side match on fromNumber or toNumber)"),
         start_date: z.string().optional().describe("Start date filter (ISO 8601, e.g. 2025-01-15)"),
         end_date: z.string().optional().describe("End date filter (ISO 8601, e.g. 2025-01-20)"),
         has_errors: z.boolean().optional().describe("If true, only return calls that have errors"),
-        limit: z.number().default(20).describe("Max results to return (default 20, max 100)"),
+        limit: z.number().default(20).describe("Max results per page (default 20, max 100)"),
+        page: z.number().default(1).describe("Page number (default 1)"),
       },
     },
     async (params) => {
@@ -59,11 +61,12 @@ export function registerGetCallLogs(server: McpServer) {
 
       // Use the analytics call-counts-log endpoint for filtered call logs
       const queryParams = new URLSearchParams({
-        page: "1",
+        page: String(params.page),
         limit: String(limit),
       });
 
       if (agentId) queryParams.set("agentId", agentId);
+      if (params.campaign_id) queryParams.set("campaignId", params.campaign_id);
       if (params.call_status) queryParams.set("callStatus", params.call_status);
       if (params.call_type) queryParams.set("callType", params.call_type);
       if (params.start_date) queryParams.set("dateFrom", params.start_date);
@@ -93,12 +96,15 @@ export function registerGetCallLogs(server: McpServer) {
         callType: call.callType,
         callStatus: call.callStatus,
         callDurationMs: call.callDurationMs,
+        callLatencyMs: call.callLatencyMs,
         costSpent: call.costSpent,
         fromNumber: call.fromNumber,
         toNumber: call.toNumber,
+        agentId: call.agentId,
         agentName: call.agentName,
         campaignName: call.campaignName,
         disconnectionReason: call.disconnectionReason,
+        source: call.source,
         timestamp: call.timestamp,
         recordingUrl: call.recordingUrl,
       }));
@@ -109,8 +115,10 @@ export function registerGetCallLogs(server: McpServer) {
             type: "text" as const,
             text: JSON.stringify(
               {
-                total: data?.totalCount ?? enrichedLogs.length,
+                total: data?.totalCalls ?? data?.totalCount ?? enrichedLogs.length,
                 returned: enrichedLogs.length,
+                page: params.page,
+                totalPages: data?.totalPages,
                 logs: enrichedLogs,
               },
               null,
