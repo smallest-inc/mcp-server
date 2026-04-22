@@ -69,10 +69,16 @@ jobs:
 
           echo "Bump type: $BUMP ($BASE_VERSION → $VERSION)"
 
+          # Delete stale remote tag if it exists (from a previous failed run)
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Deleting stale remote tag $TAG"
+            git push origin ":refs/tags/${TAG}"
+          fi
+
           # Create a lightweight tag (no commit to main needed)
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG"
+          git tag -f "$TAG"
           git push origin "$TAG"
 
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
