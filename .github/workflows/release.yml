@@ -159,7 +159,6 @@ jobs:
   publish-npm:
     needs: [version, build]
     runs-on: ubuntu-latest
-    environment: npm
     permissions:
       contents: read
       id-token: write
@@ -176,5 +175,6 @@ jobs:
 
       - run: npm install
       - run: npm run build
-      # Trusted Publishing: authenticates via OIDC, no NPM_TOKEN needed
       - run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
