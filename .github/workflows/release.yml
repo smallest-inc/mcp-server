@@ -109,12 +109,12 @@ jobs:
 
       - run: npm install
 
-      # Bundle into a single CJS file for pkg (pkg doesn't support ESM)
-      # Wrap in async IIFE to support top-level await in CJS
-      - run: npx esbuild src/index.ts --platform=node --bundle --format=cjs --outfile=dist/index.cjs --packages=external --banner:js="(async () => {" --footer:js="})()"
+      # Bundle as ESM and build standalone binaries
+      - name: Bundle
+        run: npx esbuild src/index.ts --platform=node --bundle --format=esm --outfile=dist/index.mjs --packages=external
 
       - name: Build binaries with pkg
-        run: npx @yao-pkg/pkg dist/index.cjs --targets ${{ matrix.targets }} --output dist/atoms-mcp --compress GZip
+        run: npx @yao-pkg/pkg dist/index.mjs --targets ${{ matrix.targets }} --output dist/atoms-mcp --compress GZip
 
       - name: Rename binaries
         shell: bash
