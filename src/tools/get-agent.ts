@@ -9,7 +9,7 @@ export function registerGetAgent(server: McpServer) {
     "get_agent",
     {
       description:
-        "Get full details for a single agent by ID, including defaultVariables, voice config, model, redaction settings, and workflow type.",
+        "Get full details for a single agent by ID, including voice config, model, prompt, language, call behavior settings, and workflow type.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to retrieve"),
       },
@@ -35,22 +35,49 @@ export function registerGetAgent(server: McpServer) {
                 _id: agent._id,
                 name: agent.name,
                 description: agent.description,
-                slmModel: agent.slmModel,
-                synthesizer: agent.synthesizer,
-                language: agent.language,
                 workflowType: agent.workflowType,
                 workflowId: agent.workflowId,
-                defaultVariables: agent.defaultVariables ?? {},
-                firstMessage: agent.firstMessage,
-                allowInboundCall: agent.allowInboundCall,
-                backgroundSound: agent.backgroundSound,
-                smartTurnConfig: agent.smartTurnConfig,
-                denoisingConfig: agent.denoisingConfig,
-                redactionConfig: agent.redactionConfig,
+                activeVersionId: agent.activeVersionId ?? null,
                 archived: agent.archived,
                 totalCalls: agent.totalCalls ?? 0,
                 createdAt: agent.createdAt,
                 updatedAt: agent.updatedAt,
+
+                // LLM & Knowledge
+                slmModel: agent.slmModel,
+                globalPrompt: agent.globalPrompt ?? null,
+                globalKnowledgeBaseId: agent.globalKnowledgeBaseId ?? null,
+                defaultVariables: agent.defaultVariables ?? {},
+
+                // Voice
+                synthesizer: agent.synthesizer,
+                language: agent.language,
+                firstMessage: agent.firstMessage,
+                pronunciationDicts: agent.pronunciationDicts ?? [],
+                backgroundSound: agent.backgroundSound,
+
+                // Call behavior
+                allowInboundCall: agent.allowInboundCall,
+                allowInterruptions: agent.allowInterruptions,
+                waitForUserToSpeakFirst: agent.waitForUserToSpeakFirst,
+                muteUserUntilFirstBotResponse: agent.muteUserUntilFirstBotResponse,
+                interruptionBackoffTimer: agent.interruptionBackoffTimer,
+
+                // Detection & quality
+                smartTurnConfig: agent.smartTurnConfig,
+                voiceDetectionConfig: agent.voiceDetectionConfig,
+                voiceMailDetectionConfig: agent.voiceMailDetectionConfig,
+                denoisingConfig: agent.denoisingConfig,
+
+                // Post-call & formatting
+                callDispositionConfig: agent.callDispositionConfig ?? null,
+                redactionConfig: agent.redactionConfig,
+                enableStyleGuide: agent.enableStyleGuide,
+                speechFormatting: agent.speechFormatting,
+
+                // Timeouts
+                llmIdleTimeoutConfig: agent.llmIdleTimeoutConfig,
+                sessionTimeoutConfig: agent.sessionTimeoutConfig,
               },
               null,
               2

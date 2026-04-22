@@ -9,18 +9,31 @@ export function registerGetAgents(server: McpServer) {
     "get_agents",
     {
       description:
-        "List AI agents in your organization. Returns agent configuration including voice, LLM model, language settings, and call statistics.",
+        "List AI agents in your organization. Returns agent configuration including voice, LLM model, language settings, and call statistics. Supports pagination, filtering, and sorting.",
       inputSchema: {
         agent_name: z.string().optional().describe("Filter by agent name (partial match, case-insensitive)"),
         include_archived: z.boolean().default(false).describe("Include archived agents"),
-        limit: z.number().default(20).describe("Max results to return (default 20, max 50)"),
+        workflow_type: z
+          .enum(["single_prompt", "workflow_graph"])
+          .optional()
+          .describe("Filter by workflow type"),
+        limit: z.number().default(20).describe("Max results per page (default 20, max 50)"),
+        page: z.number().default(1).describe("Page number (default 1)"),
+        sort_field: z
+          .enum(["createdAt", "updatedAt", "totalCalls", "name", "workflowType"])
+          .optional()
+          .describe("Field to sort by (default createdAt)"),
+        sort_order: z
+          .enum(["asc", "desc"])
+          .optional()
+          .describe("Sort order (default desc)"),
       },
     },
     async (params) => {
       const limit = Math.min(params.limit, 50);
 
       const queryParams = new URLSearchParams({
-        page: "1",
+        page: String(params.page),
         offset: String(limit),
       });
 
@@ -29,6 +42,15 @@ export function registerGetAgents(server: McpServer) {
       }
       if (params.include_archived) {
         queryParams.set("archived", "true");
+      }
+      if (params.workflow_type) {
+        queryParams.set("type", params.workflow_type);
+      }
+      if (params.sort_field) {
+        queryParams.set("sortField", params.sort_field);
+      }
+      if (params.sort_order) {
+        queryParams.set("sortOrder", params.sort_order);
       }
 
       const result = await atomsApi("GET", `/agent?${queryParams.toString()}`);
@@ -42,27 +64,37 @@ export function registerGetAgents(server: McpServer) {
         _id: agent._id,
         name: agent.name,
         description: agent.description,
+        workflowType: agent.workflowType,
         slmModel: agent.slmModel,
         synthesizer: agent.synthesizer,
         language: agent.language,
+        firstMessage: agent.firstMessage,
         allowInboundCall: agent.allowInboundCall,
+        allowInterruptions: agent.allowInterruptions,
+        backgroundSound: agent.backgroundSound,
+        activeVersionId: agent.activeVersionId ?? null,
         archived: agent.archived,
+        totalCalls: agent.totalCalls ?? 0,
         createdAt: agent.createdAt,
         updatedAt: agent.updatedAt,
-        firstMessage: agent.firstMessage,
-        workflowType: agent.workflowType,
-        backgroundSound: agent.backgroundSound,
-        smartTurnConfig: agent.smartTurnConfig,
-        denoisingConfig: agent.denoisingConfig,
-        redactionConfig: agent.redactionConfig,
-        totalCalls: agent.totalCalls ?? 0,
       }));
 
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ count: agents.length, agents }, null, 2),
+            text: JSON.stringify(
+              {
+                count: agents.length,
+                totalCount: data?.totalCount,
+                totalPages: data?.totalPages,
+                page: params.page,
+                hasMore: data?.hasMore ?? false,
+                agents,
+              },
+              null,
+              2
+            ),
           },
         ],
       };

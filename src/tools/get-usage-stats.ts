@@ -9,17 +9,28 @@ export function registerGetUsageStats(server: McpServer) {
     "get_usage_stats",
     {
       description:
-        "Get call usage statistics for your organization — total calls, duration, costs, and status breakdown. Useful for understanding usage patterns and costs.",
+        "Get call usage statistics for your organization — total calls, pickup rate, duration, costs, and unique users reached. Each metric includes current period, previous period, and percent change. Useful for understanding usage patterns and costs.",
       inputSchema: {
-        start_date: z.string().optional().describe("Start date (ISO 8601). Defaults to 7 days ago."),
-        end_date: z.string().optional().describe("End date (ISO 8601). Defaults to now."),
+        start_date: z
+          .string()
+          .optional()
+          .describe("Start date (ISO 8601 datetime, e.g. 2025-01-15T00:00:00Z). Defaults to 7 days ago."),
+        end_date: z
+          .string()
+          .optional()
+          .describe("End date (ISO 8601 datetime, e.g. 2025-01-20T23:59:59Z). Defaults to now."),
         agent_name: z.string().optional().describe("Filter to a specific agent (partial match)"),
+        campaign_id: z.string().optional().describe("Filter to a specific campaign by ID"),
+        call_type: z
+          .enum(["telephony_inbound", "telephony_outbound", "webcall", "chat"])
+          .optional()
+          .describe("Filter by call type"),
       },
     },
     async (params) => {
-      const startDate =
-        params.start_date ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-      const endDate = params.end_date ?? new Date().toISOString().split("T")[0];
+      const dateFrom =
+        params.start_date ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const dateTo = params.end_date ?? new Date().toISOString();
 
       // If filtering by agent, resolve agent ID first
       let agentId: string | undefined;
@@ -41,10 +52,12 @@ export function registerGetUsageStats(server: McpServer) {
       }
 
       const queryParams = new URLSearchParams({
-        startDate,
-        endDate,
+        dateFrom,
+        dateTo,
       });
       if (agentId) queryParams.set("agentId", agentId);
+      if (params.campaign_id) queryParams.set("campaignId", params.campaign_id);
+      if (params.call_type) queryParams.set("callType", params.call_type);
 
       const result = await atomsApi("GET", `/analytics/summary?${queryParams.toString()}`);
 
@@ -55,8 +68,10 @@ export function registerGetUsageStats(server: McpServer) {
       const data = result.data?.data ?? result.data;
 
       const summary = {
-        period: { from: startDate, to: endDate },
+        period: { from: dateFrom, to: dateTo },
         ...(params.agent_name ? { agentFilter: params.agent_name } : {}),
+        ...(params.campaign_id ? { campaignId: params.campaign_id } : {}),
+        ...(params.call_type ? { callType: params.call_type } : {}),
         stats: data,
       };
 
