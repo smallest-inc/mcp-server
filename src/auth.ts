@@ -3,7 +3,7 @@ interface AuthenticatedOrg {
   userId: string;
 }
 
-const ATOMS_API_URL = process.env.ATOMS_API_URL || "https://atoms-api.smallest.ai/api/v1";
+const ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 let cachedOrg: AuthenticatedOrg | null = null;

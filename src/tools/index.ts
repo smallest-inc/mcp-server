@@ -12,6 +12,7 @@ import { registerGetPhoneNumbers } from "./get-phone-numbers.js";
 import { registerGetUsageStats } from "./get-usage-stats.js";
 import { registerMakeCall } from "./make-call.js";
 import { registerUpdateAgentConfig } from "./update-agent-config.js";
+import { registerGetVoices } from "./get-voices.js";
 import { registerUpdateAgentPrompt } from "./update-agent-prompt.js";
 
 export function registerTools(server: McpServer) {
@@ -28,4 +29,5 @@ export function registerTools(server: McpServer) {
   registerDeleteAgent(server);
   registerMakeCall(server);
   registerGetPhoneNumbers(server);
+  registerGetVoices(server);
 }
