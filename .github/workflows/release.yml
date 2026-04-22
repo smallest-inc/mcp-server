@@ -110,7 +110,8 @@ jobs:
       - run: npm install
 
       # Bundle into a single CJS file for pkg (pkg doesn't support ESM)
-      - run: npx esbuild src/index.ts --platform=node --bundle --format=cjs --outfile=dist/index.cjs --packages=external --banner:js=""
+      # Wrap in async IIFE to support top-level await in CJS
+      - run: npx esbuild src/index.ts --platform=node --bundle --format=cjs --outfile=dist/index.cjs --packages=external --banner:js="(async () => {" --footer:js="})()"
 
       - name: Build binaries with pkg
         run: npx @yao-pkg/pkg dist/index.cjs --targets ${{ matrix.targets }} --output dist/atoms-mcp --compress GZip
