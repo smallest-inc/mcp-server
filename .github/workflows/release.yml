@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: node22-linux-x64,node22-linux-arm64
+          - os: macos-latest
+            targets: node22-macos-x64,node22-macos-arm64
+          - os: windows-latest
+            targets: node22-win-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # Bundle into a single CJS file for pkg (pkg doesn't support ESM)
+      - run: npx esbuild src/index.ts --platform=node --bundle --format=cjs --outfile=dist/index.cjs --packages=external --banner:js=""
+
+      - name: Build binaries with pkg
+        run: npx @yao-pkg/pkg dist/index.cjs --targets ${{ matrix.targets }} --output dist/atoms-mcp --compress GZip
+
+      - name: Rename binaries
+        shell: bash
+        run: |
+          cd dist
+          for f in atoms-mcp-*; do
+            case "$f" in
+              *macos-x64*)    mv "$f" atoms-mcp-darwin-x64 ;;
+              *macos-arm64*)  mv "$f" atoms-mcp-darwin-arm64 ;;
+              *linux-x64*)    mv "$f" atoms-mcp-linux-x64 ;;
+              *linux-arm64*)  mv "$f" atoms-mcp-linux-arm64 ;;
+              *win-x64*)      mv "$f" atoms-mcp-windows-x64.exe ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}
+          path: dist/atoms-mcp-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "MCP Server ${{ github.ref_name }}" \
+            --generate-notes \
+            binaries/*
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
