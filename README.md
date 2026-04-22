@@ -105,6 +105,20 @@ npm run dev    # run with tsx
 npm run build  # bundle to dist/
 ```
 
+## Releases
+
+Merging to `main` automatically publishes a new version to npm and GitHub Releases.
+
+**Version bumps are automatic** based on commit messages:
+
+| Commit message contains | Bump | Example |
+|---|---|---|
+| `new tool`, `new resource`, `add tool`, `add resource` | **minor** (0.2.0 → 0.3.0) | `feat: add new tool for knowledge bases` |
+| `BREAKING CHANGE` or `feat!:` | **major** (0.2.0 → 1.0.0) | `feat!: redesign agent config schema` |
+| Anything else | **patch** (0.2.0 → 0.2.1) | `fix: handle empty call logs` |
+
+To force a **major** version bump manually, include `BREAKING CHANGE` in the commit message or PR title.
+
 ## License
 
 MIT
