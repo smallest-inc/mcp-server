@@ -4,21 +4,7 @@ MCP server for the [Atoms](https://atoms.smallest.ai) voice AI platform. Manage 
 
 ## Quick start
 
-### Option A: One-line installer (no dependencies)
-
-**Mac / Linux:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.sh | bash
-```
-
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.ps1 | iex
-```
-
-Downloads a standalone binary, prompts for your API key, and configures Cursor + Claude Desktop automatically.
-
-### Option B: npm
+### Option A: npm (recommended)
 
 Requires Node.js 18+. Add this to your MCP config (`~/.cursor/mcp.json` for Cursor, `claude_desktop_config.json` for Claude Desktop):
 
@@ -35,6 +21,22 @@ Requires Node.js 18+. Add this to your MCP config (`~/.cursor/mcp.json` for Curs
   }
 }
 ```
+
+Auto-updates to the latest version every time your editor restarts.
+
+### Option B: One-line installer (no dependencies)
+
+**Mac / Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/smallest-inc/mcp-server/main/install.ps1 | iex
+```
+
+Downloads a standalone binary, prompts for your API key, and configures Cursor + Claude Desktop automatically. Re-run to update.
 
 ### Option C: One prompt
 
