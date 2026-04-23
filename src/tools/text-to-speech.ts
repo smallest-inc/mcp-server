@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { writeFile } from "fs/promises";
-import { join } from "path";
 import { homedir } from "os";
+import { join } from "path";
 
 import { formatWavesApiError } from "../waves-api.js";
 
@@ -18,9 +18,14 @@ export function registerTextToSpeech(server: McpServer) {
     "text_to_speech",
     {
       description:
-        "Convert text to speech audio using Smallest AI's Lightning TTS. Saves the audio file to Desktop (or a specified path) and returns both the file path and the audio as inline base64. Supports multiple voices, languages, speeds, and output formats.",
+        "Convert text to speech audio using Smallest AI's Lightning TTS. Saves the audio file to the specified path. " +
+        "IMPORTANT: Always ask the user where to save the file before calling. Suggest ~/Desktop/<name>.wav as default. " +
+        "Do NOT retry if successful — the file is saved even if inline audio rendering fails.",
       inputSchema: {
         text: z.string().describe("Text to synthesize into speech"),
+        output_path: z
+          .string()
+          .describe("File path to save the audio to (e.g. ~/Desktop/output.wav). Ask the user where to save."),
         voice_id: z
           .string()
           .default("emily")
@@ -45,10 +50,6 @@ export function registerTextToSpeech(server: McpServer) {
           .enum(["wav", "mp3", "pcm", "mulaw"])
           .default("wav")
           .describe("Output audio format. Default: wav"),
-        output_path: z
-          .string()
-          .optional()
-          .describe("File path to save the audio to. If omitted, saves to Desktop."),
       },
     },
     async (params) => {
@@ -91,22 +92,14 @@ export function registerTextToSpeech(server: McpServer) {
 
       // Read audio bytes
       const audioBuffer = Buffer.from(await response.arrayBuffer());
-      const base64Audio = audioBuffer.toString("base64");
 
-      // Determine output path — default to Desktop
-      const ext = params.output_format === "mulaw" ? "wav" : params.output_format;
-      const outputPath =
-        params.output_path ??
-        join(homedir(), "Desktop", `tts-${params.voice_id}-${Date.now()}.${ext}`);
+      // Expand ~ to home directory
+      let outputPath = params.output_path;
+      if (outputPath.startsWith("~/")) {
+        outputPath = outputPath.replace("~", homedir());
+      }
 
       await writeFile(outputPath, audioBuffer);
-
-      const mimeMap: Record<string, string> = {
-        wav: "audio/wav",
-        mp3: "audio/mpeg",
-        pcm: "audio/pcm",
-        mulaw: "audio/basic",
-      };
 
       return {
         content: [
@@ -114,22 +107,18 @@ export function registerTextToSpeech(server: McpServer) {
             type: "text" as const,
             text: JSON.stringify(
               {
-                message: "Audio generated successfully",
+                message: "Audio saved successfully",
                 filePath: outputPath,
                 format: params.output_format,
                 sampleRate: params.sample_rate,
                 sizeBytes: audioBuffer.length,
+                durationEstimate: `~${Math.round(audioBuffer.length / (params.sample_rate * 2))}s`,
                 voice: params.voice_id,
                 model: params.model,
               },
               null,
               2
             ),
-          },
-          {
-            type: "audio" as const,
-            data: base64Audio,
-            mimeType: mimeMap[params.output_format] ?? "audio/wav",
           },
         ],
       };
