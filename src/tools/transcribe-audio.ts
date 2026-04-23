@@ -16,20 +16,29 @@ export function registerTranscribeAudio(server: McpServer) {
     "transcribe_audio",
     {
       description:
-        "Transcribe an audio file to text using Smallest AI's Pulse STT. Supports 32+ languages with auto-detection. Pass either a file path or a URL. Returns transcription with optional word timestamps, speaker diarization, and emotion detection.",
+        "Transcribe an audio file to text using Smallest AI's Pulse STT. Supports 32+ languages. " +
+        "IMPORTANT: Always ask the user what language the audio is in before calling this tool. " +
+        "Pass a file path on the user's machine (e.g. ~/Desktop/recording.wav) or a publicly accessible URL. " +
+        "Note: files uploaded to the chat sandbox are NOT accessible — ask the user for the actual file path on their machine or a URL instead.",
       inputSchema: {
         file_path: z
           .string()
           .optional()
-          .describe("Local file path to an audio file (wav, mp3, flac, ogg, m4a, webm). Either file_path or audio_url is required."),
+          .describe(
+            "Path to audio file on the user's machine (e.g. ~/Desktop/recording.wav, /Users/name/audio.mp3). " +
+            "NOT sandbox paths. Either file_path or audio_url is required."
+          ),
         audio_url: z
           .string()
           .optional()
-          .describe("URL of an audio file to transcribe. Either file_path or audio_url is required."),
+          .describe("Publicly accessible URL of an audio file. Either file_path or audio_url is required."),
         language: z
           .string()
-          .default("multi")
-          .describe("Language code (e.g. en, hi, es, de, fr) or 'multi' for auto-detection. Default: multi."),
+          .describe(
+            "Language of the audio. REQUIRED — ask the user. " +
+            "Use ISO 639-1 codes: en, hi, es, de, fr, it, pt, ta, mr, gu, bn, kn, ml, te, pa, or, ru, uk, pl, nl, sv, etc. " +
+            "Use 'multi' only if the user explicitly says they don't know the language."
+          ),
         word_timestamps: z
           .boolean()
           .default(false)
@@ -52,7 +61,10 @@ export function registerTranscribeAudio(server: McpServer) {
       if (!params.file_path && !params.audio_url) {
         return {
           content: [
-            { type: "text" as const, text: "Either file_path or audio_url is required." },
+            {
+              type: "text" as const,
+              text: "Either file_path or audio_url is required. For files uploaded to the chat, ask the user for the actual path on their machine or a URL instead.",
+            },
           ],
         };
       }
@@ -80,9 +92,28 @@ export function registerTranscribeAudio(server: McpServer) {
           body: JSON.stringify({ url: params.audio_url }),
         });
       } else {
+        // Expand ~ to home directory
+        let filePath = params.file_path!;
+        if (filePath.startsWith("~/")) {
+          filePath = filePath.replace("~", process.env.HOME ?? "");
+        }
+
         // Read file and send as binary
-        const fileBuffer = await readFile(params.file_path!);
-        const ext = params.file_path!.split(".").pop()?.toLowerCase();
+        let fileBuffer: Buffer;
+        try {
+          fileBuffer = await readFile(filePath);
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Cannot read file: ${filePath}. ${err.code === "ENOENT" ? "File not found. Make sure the path is correct and the file exists on your machine (not in a chat sandbox)." : err.message}`,
+              },
+            ],
+          };
+        }
+
+        const ext = filePath.split(".").pop()?.toLowerCase();
         const contentTypeMap: Record<string, string> = {
           wav: "audio/wav",
           mp3: "audio/mpeg",
@@ -99,7 +130,7 @@ export function registerTranscribeAudio(server: McpServer) {
             "Content-Type": contentType,
             Authorization: `Bearer ${getApiKey()}`,
           },
-          body: fileBuffer,
+          body: new Uint8Array(fileBuffer),
         });
       }
 
