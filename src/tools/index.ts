@@ -2,6 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { registerAnalyticsTools } from "./analytics.js";
 import { registerCreateAgent } from "./create-agent.js";
+import { registerTextToSpeech } from "./text-to-speech.js";
+import { registerTranscribeAudio } from "./transcribe-audio.js";
 import { registerDebugCall } from "./debug-call.js";
 import { registerDeleteAgent } from "./delete-agent.js";
 import { registerGetAgent } from "./get-agent.js";
@@ -34,4 +36,6 @@ export function registerTools(server: McpServer) {
   registerGetVoices(server);
   registerPublishDraft(server);
   registerAnalyticsTools(server);
+  registerTextToSpeech(server);
+  registerTranscribeAudio(server);
 }
