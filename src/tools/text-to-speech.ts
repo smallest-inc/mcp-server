@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { writeFile } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { homedir } from "os";
 
 import { formatWavesApiError } from "../waves-api.js";
 
@@ -18,7 +18,7 @@ export function registerTextToSpeech(server: McpServer) {
     "text_to_speech",
     {
       description:
-        "Convert text to speech audio using Smallest AI's Lightning TTS. Saves the audio to a file and returns the file path. Supports multiple voices, languages, speeds, and output formats.",
+        "Convert text to speech audio using Smallest AI's Lightning TTS. Saves the audio file to Desktop (or a specified path) and returns both the file path and the audio as inline base64. Supports multiple voices, languages, speeds, and output formats.",
       inputSchema: {
         text: z.string().describe("Text to synthesize into speech"),
         voice_id: z
@@ -48,7 +48,7 @@ export function registerTextToSpeech(server: McpServer) {
         output_path: z
           .string()
           .optional()
-          .describe("File path to save the audio to. If omitted, saves to a temp file."),
+          .describe("File path to save the audio to. If omitted, saves to Desktop."),
       },
     },
     async (params) => {
@@ -91,13 +91,22 @@ export function registerTextToSpeech(server: McpServer) {
 
       // Read audio bytes
       const audioBuffer = Buffer.from(await response.arrayBuffer());
+      const base64Audio = audioBuffer.toString("base64");
 
-      // Determine output path
+      // Determine output path — default to Desktop
       const ext = params.output_format === "mulaw" ? "wav" : params.output_format;
       const outputPath =
-        params.output_path ?? join(tmpdir(), `tts-${Date.now()}.${ext}`);
+        params.output_path ??
+        join(homedir(), "Desktop", `tts-${params.voice_id}-${Date.now()}.${ext}`);
 
       await writeFile(outputPath, audioBuffer);
+
+      const mimeMap: Record<string, string> = {
+        wav: "audio/wav",
+        mp3: "audio/mpeg",
+        pcm: "audio/pcm",
+        mulaw: "audio/basic",
+      };
 
       return {
         content: [
@@ -116,6 +125,11 @@ export function registerTextToSpeech(server: McpServer) {
               null,
               2
             ),
+          },
+          {
+            type: "audio" as const,
+            data: base64Audio,
+            mimeType: mimeMap[params.output_format] ?? "audio/wav",
           },
         ],
       };
