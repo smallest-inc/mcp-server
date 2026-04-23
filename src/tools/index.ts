@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { registerAnalyticsTools } from "./analytics.js";
 import { registerCreateAgent } from "./create-agent.js";
 import { registerDebugCall } from "./debug-call.js";
 import { registerDeleteAgent } from "./delete-agent.js";
@@ -32,4 +33,5 @@ export function registerTools(server: McpServer) {
   registerGetPhoneNumbers(server);
   registerGetVoices(server);
   registerPublishDraft(server);
+  registerAnalyticsTools(server);
 }
