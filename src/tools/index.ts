@@ -16,6 +16,7 @@ import { registerGetUsageStats } from "./get-usage-stats.js";
 import { registerMakeCall } from "./make-call.js";
 import { registerUpdateAgentConfig } from "./update-agent-config.js";
 import { registerGetVoices } from "./get-voices.js";
+import { registerInviteMember } from "./invite-member.js";
 import { registerPublishDraft } from "./publish-draft.js";
 import { registerUpdateAgentPrompt } from "./update-agent-prompt.js";
 
@@ -38,4 +39,5 @@ export function registerTools(server: McpServer) {
   registerAnalyticsTools(server);
   registerTextToSpeech(server);
   registerTranscribeAudio(server);
+  registerInviteMember(server);
 }
