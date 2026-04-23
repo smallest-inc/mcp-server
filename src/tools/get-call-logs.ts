@@ -4,12 +4,12 @@ import { z } from "zod";
 import { atomsApi, formatApiError } from "../api.js";
 import type { IAgentDTO, ICallCountsLogEntry } from "../types.js";
 
-export function registerGetCallLogs(server: McpServer) {
+export function registerListCalls(server: McpServer) {
   server.registerTool(
-    "get_call_logs",
+    "list_calls",
     {
       description:
-        "Get call logs for your organization. Filter by status, type, date range, agent name, phone number, or campaign. Returns call metadata, duration, cost, and disconnection reasons.",
+        "Search and list calls across your organization. Use this to browse calls with filters (by status, type, date range, agent, phone number, campaign). Returns a summary list with metadata, duration, cost, and disconnection reasons. For detailed info about a specific call (status, transcript, errors, debugging), use debug_call instead.",
       inputSchema: {
         call_status: z
           .enum(["pending", "in_queue", "active", "completed", "failed", "no_answer", "busy", "cancelled"])

@@ -43,7 +43,7 @@ export function registerMakeCall(server: McpServer) {
           content: [
             {
               type: "text" as const,
-              text: "Smallest Atoms MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
+              text: "Smallest MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
             },
           ],
         };
@@ -59,11 +59,20 @@ export function registerMakeCall(server: McpServer) {
       if (params.variables) {
         body.variables = params.variables;
       }
+      // For versioned agents, always include the version ID so the dispatcher
+      // can resolve the agent config. Without it, calls get stuck in queue.
       if (params.version_id) {
         body.versionId = params.version_id;
+      } else if (agent.activeVersionId) {
+        body.versionId = agent.activeVersionId;
       }
 
-      const result = await atomsApi("POST", "/conversation/outbound", body);
+      // MCP calls use test slots to avoid consuming production concurrency.
+      // Without this, calls get stuck in the dispatcher queue if the org has
+      // no production outbound slots reserved.
+      const result = await atomsApi("POST", "/conversation/outbound", body, {
+        "x-test-call": "true",
+      });
 
       if (!result.ok) {
         return { content: [{ type: "text" as const, text: formatApiError(result) }] };

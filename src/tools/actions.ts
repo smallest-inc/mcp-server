@@ -5,7 +5,7 @@ export { registerDeleteAgent } from "./delete-agent.js";
 export { registerGetAgent } from "./get-agent.js";
 export { registerGetAgentPrompt } from "./get-agent-prompt.js";
 export { registerGetAgents } from "./get-agents.js";
-export { registerGetCallLogs } from "./get-call-logs.js";
+export { registerListCalls } from "./get-call-logs.js";
 export { registerGetCampaigns } from "./get-campaigns.js";
 export { registerGetPhoneNumbers } from "./get-phone-numbers.js";
 export { registerGetUsageStats } from "./get-usage-stats.js";

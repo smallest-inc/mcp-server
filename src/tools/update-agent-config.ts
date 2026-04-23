@@ -9,7 +9,7 @@ export function registerUpdateAgentConfig(server: McpServer) {
     "update_agent_config",
     {
       description:
-        "Update an agent's configuration (name, language, first message, voice settings, model, variables, etc.). Only provided fields are updated. To update the agent's prompt/instructions, use update_agent_prompt instead. Note: if the agent has versioning enabled, only metadata fields (name, description, allowInboundCall) can be updated via this endpoint.",
+        "Update an agent's configuration (name, language, first message, voice settings, model, variables, etc.). Only provided fields are updated. To update the agent's prompt/instructions, use update_agent_prompt instead. For versioned agents, changes are saved as a draft — use publish_draft to make them live, or test the draft first via make_call with the draft's version_id.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         name: z.string().optional().describe("New agent name"),
@@ -186,7 +186,7 @@ export function registerUpdateAgentConfig(server: McpServer) {
           content: [
             {
               type: "text" as const,
-              text: "Smallest Atoms MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
+              text: "Smallest MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
             },
           ],
         };
@@ -266,17 +266,122 @@ export function registerUpdateAgentConfig(server: McpServer) {
         };
       }
 
-      const result = await atomsApi("PATCH", `/agent/${encodeURIComponent(params.agent_id)}`, body);
+      const isVersioned = !!agent.activeVersionId;
 
-      if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      // --- Non-versioned agent: direct update ---
+      if (!isVersioned) {
+        const result = await atomsApi("PATCH", `/agent/${encodeURIComponent(params.agent_id)}`, body);
+
+        if (!result.ok) {
+          return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Agent ${params.agent_id} config updated successfully. Fields updated: ${Object.keys(body).join(", ")}`,
+            },
+          ],
+        };
       }
 
+      // --- Versioned agent: create draft → update draft config ---
+
+      // Separate metadata fields (can still be updated directly on the agent)
+      const metadataFields: Record<string, unknown> = {};
+      const configFields: Record<string, unknown> = {};
+      const METADATA_KEYS = ["name", "description", "allowInboundCall"];
+
+      for (const [key, value] of Object.entries(body)) {
+        if (METADATA_KEYS.includes(key)) {
+          metadataFields[key] = value;
+        } else {
+          configFields[key] = value;
+        }
+      }
+
+      const messages: string[] = [];
+
+      // Update metadata directly if any
+      if (Object.keys(metadataFields).length > 0) {
+        const metaResult = await atomsApi(
+          "PATCH",
+          `/agent/${encodeURIComponent(params.agent_id)}`,
+          metadataFields
+        );
+        if (metaResult.ok) {
+          messages.push(`Metadata updated directly: ${Object.keys(metadataFields).join(", ")}`);
+        } else {
+          messages.push(`Failed to update metadata: ${formatApiError(metaResult)}`);
+        }
+      }
+
+      // Update config via draft if any config fields
+      if (Object.keys(configFields).length > 0) {
+        // Step 1: Create draft from active version
+        const createDraftResult = await atomsApi(
+          "POST",
+          `/agent/${encodeURIComponent(params.agent_id)}/drafts`,
+          { sourceVersionId: agent.activeVersionId }
+        );
+
+        if (!createDraftResult.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: messages.length > 0
+                  ? `${messages.join(". ")}. However, failed to create draft for config changes: ${formatApiError(createDraftResult)}`
+                  : `Failed to create draft: ${formatApiError(createDraftResult)}`,
+              },
+            ],
+          };
+        }
+
+        const draft = createDraftResult.data?.data ?? createDraftResult.data;
+        const draftId = draft?.draftId;
+
+        // Step 2: Update draft config
+        const updateDraftResult = await atomsApi(
+          "PATCH",
+          `/agent/${encodeURIComponent(params.agent_id)}/drafts/${encodeURIComponent(draftId)}/config`,
+          configFields
+        );
+
+        if (!updateDraftResult.ok) {
+          messages.push(`Draft ${draftId} created but failed to update config: ${formatApiError(updateDraftResult)}`);
+        } else {
+          messages.push(`Config changes saved to draft. Fields: ${Object.keys(configFields).join(", ")}`);
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  message: messages.join(". "),
+                  versioned: true,
+                  agentId: params.agent_id,
+                  draftId,
+                  status: "draft",
+                  hint: "Changes are in draft state (not live yet). Use publish_draft to make them live, or make_call with version_id to test the draft first.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      // Only metadata was updated
       return {
         content: [
           {
             type: "text" as const,
-            text: `Agent ${params.agent_id} config updated successfully. Fields updated: ${Object.keys(body).join(", ")}`,
+            text: messages.join(". "),
           },
         ],
       };

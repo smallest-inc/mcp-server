@@ -40,7 +40,7 @@ export function registerGetAgentPrompt(server: McpServer) {
                   agent_name: agent.name,
                   workflow_type: "workflow_graph",
                   global_prompt: agent.globalPrompt ?? null,
-                  note: "This is a conversation flow agent. The globalPrompt is a high-level instruction; individual node prompts are configured in the UI. Smallest Atoms MCP does not support editing conversation flow agents.",
+                  note: "This is a conversation flow agent. The globalPrompt is a high-level instruction; individual node prompts are configured in the UI. Smallest MCP does not support editing conversation flow agents.",
                 },
                 null,
                 2
