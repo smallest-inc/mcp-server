@@ -9,7 +9,7 @@ export function registerUpdateAgentPrompt(server: McpServer) {
     "update_agent_prompt",
     {
       description:
-        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents. Optionally update the first message too.",
+        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents. Optionally update the first message too. For versioned agents, changes are saved as a draft — use publish_draft to make them live.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         prompt: z.string().describe("The new system prompt for the agent"),
@@ -42,12 +42,82 @@ export function registerUpdateAgentPrompt(server: McpServer) {
           content: [
             {
               type: "text" as const,
-              text: "Smallest Atoms MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
+              text: "Smallest MCP does not support conversation flow (workflow_graph) agents. Please use single_prompt agents or recreate the agent via create_agent.",
             },
           ],
         };
       }
 
+      const isVersioned = !!agent.activeVersionId;
+
+      // --- Versioned agent: use draft flow ---
+      if (isVersioned) {
+        const createDraftResult = await atomsApi(
+          "POST",
+          `/agent/${encodeURIComponent(params.agent_id)}/drafts`,
+          { sourceVersionId: agent.activeVersionId }
+        );
+
+        if (!createDraftResult.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Failed to create draft for prompt update: ${formatApiError(createDraftResult)}`,
+              },
+            ],
+          };
+        }
+
+        const draft = createDraftResult.data?.data ?? createDraftResult.data;
+        const draftId = draft?.draftId;
+
+        const configBody: Record<string, unknown> = {
+          singlePromptConfig: { prompt: params.prompt },
+        };
+        if (params.first_message !== undefined) {
+          configBody.firstMessage = params.first_message;
+        }
+
+        const updateDraftResult = await atomsApi(
+          "PATCH",
+          `/agent/${encodeURIComponent(params.agent_id)}/drafts/${encodeURIComponent(draftId)}/config`,
+          configBody
+        );
+
+        if (!updateDraftResult.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Draft ${draftId} created but failed to update prompt: ${formatApiError(updateDraftResult)}`,
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  message: `Prompt${params.first_message !== undefined ? " and first message" : ""} saved to draft.`,
+                  versioned: true,
+                  agentId: params.agent_id,
+                  draftId,
+                  status: "draft",
+                  hint: "Changes are in draft state (not live yet). Use publish_draft to make them live, or make_call with version_id to test the draft first.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      // --- Non-versioned agent: direct workflow update ---
       if (!workflowId) {
         return {
           content: [

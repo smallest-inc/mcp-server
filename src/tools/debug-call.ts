@@ -8,7 +8,7 @@ export function registerDebugCall(server: McpServer) {
     "debug_call",
     {
       description:
-        "Deep-dive into a single call for debugging. Returns call status, failure reasons, errors, transcript, post-call analytics, latency metrics, cost breakdown, variables, voice/model config at time of call, and full event timeline. Use a callId (e.g. CALL-1234567890-abc123).",
+        "Get detailed info about a single call — use this to check call status, debug failures, or get transcripts. Returns call status, failure reasons, errors, transcript, post-call analytics, latency metrics, cost breakdown, variables, voice/model config at time of call, and full event timeline. Works for calls in any state (queued, in-progress, completed, failed). Use a callId (e.g. CALL-1234567890-abc123).",
       inputSchema: {
         call_id: z.string().describe("The callId to debug (e.g. CALL-1234567890-abc123)"),
       },

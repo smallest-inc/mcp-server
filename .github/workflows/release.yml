@@ -115,26 +115,26 @@ jobs:
         run: npx esbuild src/index.ts --platform=node --bundle --format=esm --outfile=dist/index.mjs --packages=external
 
       - name: Build binaries with pkg
-        run: npx @yao-pkg/pkg dist/index.mjs --targets ${{ matrix.targets }} --output dist/atoms-mcp --compress GZip
+        run: npx @yao-pkg/pkg dist/index.mjs --targets ${{ matrix.targets }} --output dist/smallest-mcp --compress GZip
 
       - name: Rename binaries
         shell: bash
         run: |
           cd dist
-          for f in atoms-mcp-*; do
+          for f in smallest-mcp-*; do
             case "$f" in
-              *macos-x64*)    mv "$f" atoms-mcp-darwin-x64 ;;
-              *macos-arm64*)  mv "$f" atoms-mcp-darwin-arm64 ;;
-              *linux-x64*)    mv "$f" atoms-mcp-linux-x64 ;;
-              *linux-arm64*)  mv "$f" atoms-mcp-linux-arm64 ;;
-              *win-x64*)      mv "$f" atoms-mcp-windows-x64.exe ;;
+              *macos-x64*)    mv "$f" smallest-mcp-darwin-x64 ;;
+              *macos-arm64*)  mv "$f" smallest-mcp-darwin-arm64 ;;
+              *linux-x64*)    mv "$f" smallest-mcp-linux-x64 ;;
+              *linux-arm64*)  mv "$f" smallest-mcp-linux-arm64 ;;
+              *win-x64*)      mv "$f" smallest-mcp-windows-x64.exe ;;
             esac
           done
 
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.os }}
-          path: dist/atoms-mcp-*
+          path: dist/smallest-mcp-*
 
   release:
     needs: [version, build]

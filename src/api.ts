@@ -16,7 +16,8 @@ interface ApiResult {
 export async function atomsApi(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders?: Record<string, string>
 ): Promise<ApiResult> {
   if (!ATOMS_API_KEY) {
     throw new Error("ATOMS_API_KEY environment variable is required");
@@ -29,6 +30,7 @@ export async function atomsApi(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${ATOMS_API_KEY}`,
+    ...extraHeaders,
   };
 
   const init: RequestInit = { method, headers };

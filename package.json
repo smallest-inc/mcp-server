@@ -1,7 +1,7 @@
 {
-  "name": "@developer-smallestai/atoms-mcp-server",
+  "name": "@developer-smallestai/smallest-mcp-server",
   "version": "0.1.1",
-  "description": "MCP server for the Atoms platform — query call logs, agents, usage stats from your IDE",
+  "description": "MCP server for the Smallest AI platform — manage agents, debug calls, view analytics from your IDE",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
     "dist"
   ],
   "bin": {
-    "atoms-mcp": "./dist/index.js"
+    "smallest-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",

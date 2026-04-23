@@ -6,7 +6,7 @@ import { registerTools } from "./tools/index.js";
 
 const server = new McpServer(
   {
-    name: "atoms",
+    name: "smallest",
     version: "0.1.0",
   },
   {
