@@ -1,19 +1,29 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { registerActivateVersion } from "./activate-version.js";
+import { registerAddAudienceMembers } from "./add-audience-members.js";
 import { registerAnalyticsTools } from "./analytics.js";
 import { registerCompareVersionMetrics } from "./compare-version-metrics.js";
 import { registerCreateAgent } from "./create-agent.js";
+import { registerCreateCampaign } from "./create-campaign.js";
 import { registerDebugCall } from "./debug-call.js";
 import { registerDeleteAgent } from "./delete-agent.js";
+import { registerDeleteAudienceMembers } from "./delete-audience-members.js";
+import { registerDeleteAudience } from "./delete-audience.js";
+import { registerDeleteCampaign } from "./delete-campaign.js";
 import { registerDiffVersions } from "./diff-versions.js";
 import { registerDuplicateAgent } from "./duplicate-agent.js";
+import { registerExportCampaignLogs } from "./export-campaign-logs.js";
 import { registerGetAgent } from "./get-agent.js";
 import { registerGetAgentPrompt } from "./get-agent-prompt.js";
 import { registerGetAgents } from "./get-agents.js";
+import { registerGetAudienceMembers } from "./get-audience-members.js";
+import { registerGetAudience } from "./get-audience.js";
+import { registerGetAudiences } from "./get-audiences.js";
 import { registerGetAutoReload } from "./get-auto-reload.js";
 import { registerGetBillingAlerts } from "./get-billing-alerts.js";
 import { registerListCalls } from "./get-call-logs.js";
+import { registerGetCampaign } from "./get-campaign.js";
 import { registerGetCampaigns } from "./get-campaigns.js";
 import { registerGetCreditBalance } from "./get-credit-balance.js";
 import { registerGetCreditLedger } from "./get-credit-ledger.js";
@@ -32,9 +42,12 @@ import { registerInviteMember } from "./invite-member.js";
 import { registerListDrafts } from "./list-drafts.js";
 import { registerListVersions } from "./list-versions.js";
 import { registerMakeCall } from "./make-call.js";
+import { registerPauseCampaign } from "./pause-campaign.js";
 import { registerPublishDraft } from "./publish-draft.js";
 import { registerRedeemCoupon } from "./redeem-coupon.js";
 import { registerRenameDraft } from "./rename-draft.js";
+import { registerSearchAudienceMembers } from "./search-audience-members.js";
+import { registerStartCampaign } from "./start-campaign.js";
 import { registerTestDraft } from "./test-draft.js";
 import { registerTestVersion } from "./test-version.js";
 import { registerTextToSpeech } from "./text-to-speech.js";
@@ -73,11 +86,28 @@ export function registerTools(server: McpServer) {
   registerCompareVersionMetrics(server);
   registerTestVersion(server);
 
-  // Calls & campaigns
+  // Audiences
+  registerGetAudiences(server);
+  registerGetAudience(server);
+  registerDeleteAudience(server);
+  registerGetAudienceMembers(server);
+  registerSearchAudienceMembers(server);
+  registerAddAudienceMembers(server);
+  registerDeleteAudienceMembers(server);
+
+  // Campaigns
+  registerGetCampaigns(server);
+  registerGetCampaign(server);
+  registerCreateCampaign(server);
+  registerStartCampaign(server);
+  registerPauseCampaign(server);
+  registerDeleteCampaign(server);
+  registerExportCampaignLogs(server);
+
+  // Calls
   registerListCalls(server);
   registerMakeCall(server);
   registerDebugCall(server);
-  registerGetCampaigns(server);
   registerGetUsageStats(server);
 
   // Billing & payments
