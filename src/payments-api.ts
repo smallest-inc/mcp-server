@@ -1,3 +1,5 @@
+import { getAuthenticatedOrg } from "./auth.js";
+
 const PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
@@ -9,9 +11,10 @@ interface PaymentsApiResult {
 
 /**
  * Make an authenticated request to the Payments API.
+ * Automatically includes the API key and X-Organization-Id header.
  */
 export async function paymentsApi(
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PATCH" | "DELETE" | "PUT",
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
@@ -19,10 +22,13 @@ export async function paymentsApi(
     throw new Error("ATOMS_API_KEY environment variable is required for payment API calls");
   }
 
+  const org = await getAuthenticatedOrg();
+
   const url = `${PAYMENTS_API_URL}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${ATOMS_API_KEY}`,
+    "X-Organization-Id": org.orgId,
   };
 
   const init: RequestInit = { method, headers };
