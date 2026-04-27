@@ -9,7 +9,7 @@ export function registerMakeCall(server: McpServer) {
     "make_call",
     {
       description:
-        "Initiate an outbound phone call using a specific agent. The agent will call the provided phone number and follow its configured prompt.",
+        "Initiate an outbound phone call using a specific agent. The agent will call the provided phone number and follow its configured prompt. Only telephony outbound calls are supported — for webcall or chat, use app.smallest.ai.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to use for the call"),
         phone_number: z.string().describe("Phone number to call in E.164 format (e.g. +14155551234)"),
