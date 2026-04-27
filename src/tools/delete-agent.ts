@@ -8,20 +8,15 @@ export function registerDeleteAgent(server: McpServer) {
     "delete_agent",
     {
       description:
-        "Archive (soft-delete) or unarchive an agent by its ID. Archived agents are inactive but can be recovered. Cannot archive agents with active campaigns.",
+        "Archive (soft-delete) an agent by its ID. Archived agents are inactive. Cannot archive agents with active campaigns. Unarchiving is not supported — to restore an agent, use app.smallest.ai.",
       inputSchema: {
-        agent_id: z.string().describe("The agent ID to archive or unarchive"),
-        unarchive: z
-          .boolean()
-          .optional()
-          .describe("Set to true to unarchive (restore) a previously archived agent. Default is false (archive)."),
+        agent_id: z.string().describe("The agent ID to archive"),
       },
     },
     async (params) => {
-      const queryParam = params.unarchive ? "?on=false" : "";
       const result = await atomsApi(
         "DELETE",
-        `/agent/${encodeURIComponent(params.agent_id)}/archive${queryParam}`
+        `/agent/${encodeURIComponent(params.agent_id)}/archive`
       );
 
       if (!result.ok) {
@@ -33,12 +28,11 @@ export function registerDeleteAgent(server: McpServer) {
         return { content: [{ type: "text" as const, text: formatApiError(result) }] };
       }
 
-      const action = params.unarchive ? "unarchived" : "archived";
       return {
         content: [
           {
             type: "text" as const,
-            text: `Agent ${params.agent_id} has been ${action} successfully.`,
+            text: `Agent ${params.agent_id} has been archived successfully.`,
           },
         ],
       };

@@ -19,7 +19,6 @@ import { registerGetCreditBalance } from "./get-credit-balance.js";
 import { registerGetCreditLedger } from "./get-credit-ledger.js";
 import { registerGetDraftDiff } from "./get-draft-diff.js";
 import { registerGetDraft } from "./get-draft.js";
-import { registerGetFeatures } from "./get-features.js";
 import { registerGetInvoices } from "./get-invoices.js";
 import { registerGetPaymentMethods } from "./get-payment-methods.js";
 import { registerGetPhoneNumbers } from "./get-phone-numbers.js";
@@ -90,7 +89,6 @@ export function registerTools(server: McpServer) {
   registerGetBillingAlerts(server);
   registerUpdateBillingAlerts(server);
   registerGetPlans(server);
-  registerGetFeatures(server);
   registerValidateCoupon(server);
   registerRedeemCoupon(server);
 
