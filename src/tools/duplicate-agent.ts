@@ -27,7 +27,7 @@ export function registerDuplicateAgent(server: McpServer) {
       const result = await atomsApi(
         "POST",
         `/agent/${encodeURIComponent(params.agent_id)}/duplicate`,
-        { targetOrganizationId: targetOrgId }
+        { targetOrganizationId: targetOrgId, origin: "mcp" }
       );
 
       if (!result.ok) {
