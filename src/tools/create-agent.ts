@@ -119,6 +119,7 @@ export function registerCreateAgent(server: McpServer) {
       const supported = params.language?.supported ?? [lang];
 
       const body: Record<string, unknown> = {
+        origin: "mcp",
         workflowType: "single_prompt",
         language: {
           default: lang,
