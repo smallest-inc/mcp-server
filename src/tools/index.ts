@@ -43,6 +43,7 @@ import { registerListVersions } from "./list-versions.js";
 import { registerMakeCall } from "./make-call.js";
 import { registerPauseCampaign } from "./pause-campaign.js";
 import { registerPublishDraft } from "./publish-draft.js";
+import { registerRealtimeAgent } from "./realtime-agent.js";
 import { registerRedeemCoupon } from "./redeem-coupon.js";
 import { registerRenameDraft } from "./rename-draft.js";
 import { registerSearchAudienceMembers } from "./search-audience-members.js";
@@ -107,6 +108,7 @@ export function registerTools(server: McpServer) {
   registerListCalls(server);
   registerMakeCall(server);
   registerDebugCall(server);
+  registerRealtimeAgent(server);
   registerGetUsageStats(server);
 
   // Billing & payments
