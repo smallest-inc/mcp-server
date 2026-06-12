@@ -89,6 +89,16 @@ export interface IAgentDTO {
   sessionTimeoutConfig?: {
     timeoutTimeInSecs: number;
   };
+  preCallAPI?: {
+    isEnabled: boolean;
+    url: string;
+    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+    timeout: number;
+    queryParams?: Record<string, unknown>;
+    responseVariables: { variableName: string; jsonPath: string }[];
+  };
 }
 
 // ─── Campaign Types ───────────────────────────────────────────────────────────

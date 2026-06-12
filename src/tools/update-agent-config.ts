@@ -48,7 +48,9 @@ export function registerUpdateAgentConfig(server: McpServer) {
                     "gpt-realtime-mini",
                     "other",
                   ])
-                  .describe("Voice model"),
+                  .describe(
+                    "Voice model. To use a Lightning V3.1 Pro voice, set model to waves_lightning_v3_1 and pick a voiceId whose supportedModels include 'lightning-v3.1-pro' (see get_voices) — the platform routes it to the Pro pool automatically."
+                  ),
                 voiceId: z.string().describe("Voice ID (e.g. rachel, nyah, etc.)"),
               })
               .optional()
@@ -65,6 +67,12 @@ export function registerUpdateAgentConfig(server: McpServer) {
           .enum(["electron", "electron-kogta", "gpt-4o", "gpt-4.1", "gpt-5.2", "gpt-realtime-mini", "gpt-realtime"])
           .optional()
           .describe("Inference LLM model for the agent"),
+        transcriber_type: z
+          .enum(["pulse", "pulse-legacy"])
+          .optional()
+          .describe(
+            "Speech-to-text (STT) transcriber. 'pulse' is the current default and recommended option (widest language support). 'pulse-legacy' is the older model, deprecated and only available to allowlisted organizations — prefer 'pulse'. Note: 'gpt-realtime'/'gpt-realtime-mini' transcribers are set automatically when using a speech-to-speech LLM model and should not be set here."
+          ),
         global_prompt: z
           .string()
           .optional()
@@ -211,6 +219,7 @@ export function registerUpdateAgentConfig(server: McpServer) {
       if (params.background_sound !== undefined) body.backgroundSound = params.background_sound;
       if (params.speech_formatting !== undefined) body.speechFormatting = params.speech_formatting;
       if (params.slm_model !== undefined) body.slmModel = params.slm_model;
+      if (params.transcriber_type !== undefined) body.transcriberType = params.transcriber_type;
       if (params.global_prompt !== undefined) body.globalPrompt = params.global_prompt;
       if (params.default_variables !== undefined) body.defaultVariables = params.default_variables;
       if (params.knowledge_base_id !== undefined) body.globalKnowledgeBaseId = params.knowledge_base_id;

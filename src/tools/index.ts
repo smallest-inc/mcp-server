@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { registerActivateVersion } from "./activate-version.js";
+import { registerAddAgentTool } from "./add-agent-tool.js";
 import { registerAddAudienceMembers } from "./add-audience-members.js";
 import { registerAnalyticsTools } from "./analytics.js";
 import { registerCompareVersionMetrics } from "./compare-version-metrics.js";
@@ -44,8 +45,10 @@ import { registerMakeCall } from "./make-call.js";
 import { registerPauseCampaign } from "./pause-campaign.js";
 import { registerPublishDraft } from "./publish-draft.js";
 import { registerRedeemCoupon } from "./redeem-coupon.js";
+import { registerRemoveAgentTool } from "./remove-agent-tool.js";
 import { registerRenameDraft } from "./rename-draft.js";
 import { registerSearchAudienceMembers } from "./search-audience-members.js";
+import { registerSetPreCallApi } from "./set-pre-call-api.js";
 import { registerStartCampaign } from "./start-campaign.js";
 import { registerTestDraft } from "./test-draft.js";
 import { registerTestVersion } from "./test-version.js";
@@ -65,6 +68,9 @@ export function registerTools(server: McpServer) {
   registerCreateAgent(server);
   registerUpdateAgentPrompt(server);
   registerUpdateAgentConfig(server);
+  registerAddAgentTool(server);
+  registerRemoveAgentTool(server);
+  registerSetPreCallApi(server);
   registerDeleteAgent(server);
   registerDuplicateAgent(server);
 

@@ -8,7 +8,7 @@ export function registerCreateAgent(server: McpServer) {
     "create_agent",
     {
       description:
-        "Create a new AI agent in your organization. The agent is created as a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1) by default. Returns the created agent's ID. Set the agent prompt via update_agent_prompt after creation.",
+        "Create a new AI agent in your organization. The agent is created as a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1) by default. The STT transcriber defaults to Pulse — change it (e.g. to pulse-legacy) via update_agent_config after creation. Returns the created agent's ID. Set the agent prompt via update_agent_prompt after creation.",
       inputSchema: {
         name: z.string().optional().describe("Name for the new agent"),
         description: z.string().optional().describe("Short description of what the agent does"),
@@ -45,7 +45,9 @@ export function registerCreateAgent(server: McpServer) {
                     "gpt-realtime-mini",
                     "other",
                   ])
-                  .describe("Voice model to use"),
+                  .describe(
+                    "Voice model to use. To use a Lightning V3.1 Pro voice, set model to waves_lightning_v3_1 and pick a voiceId whose supportedModels include 'lightning-v3.1-pro' (see get_voices) — the platform routes it to the Pro pool automatically."
+                  ),
                 voiceId: z.string().describe("Voice ID (e.g. rachel, nyah, etc.)"),
               })
               .optional()
