@@ -51,11 +51,41 @@ export type PersistToolsResult =
   | { ok: false; message: string };
 
 /**
+ * Resolve the draft to write into: reuse the caller-supplied draft (edits stack
+ * as new revisions of that draft) or create a fresh one from the active version.
+ */
+async function resolveTargetDraft(
+  agentId: string,
+  activeVersionId: string,
+  existingDraftId?: string
+): Promise<{ ok: true; draftId: string } | { ok: false; message: string }> {
+  if (existingDraftId) {
+    return { ok: true, draftId: existingDraftId };
+  }
+
+  const createDraftResult = await atomsApi("POST", `/agent/${encodeURIComponent(agentId)}/drafts`, {
+    sourceVersionId: activeVersionId,
+  });
+  if (!createDraftResult.ok) {
+    return { ok: false, message: `Failed to create draft: ${formatApiError(createDraftResult)}` };
+  }
+
+  const draft = createDraftResult.data?.data ?? createDraftResult.data;
+  const draftId = draft?.draftId as string | undefined;
+  if (!draftId) {
+    return { ok: false, message: "Draft created but no draftId returned by the API." };
+  }
+  return { ok: true, draftId };
+}
+
+/**
  * Persist the full tools array on an agent.
  *
- * - Versioned agent (has activeVersionId): creates a draft and writes the tools
- *   to the draft's workflow_tools section. The prompt lives in a separate
- *   section and is left untouched. Caller must publish_draft to go live.
+ * - Versioned agent (has activeVersionId): writes the tools to a draft's
+ *   workflow_tools section — an existing draft when `draftId` is given
+ *   (stacking a new revision onto it), else a fresh draft from the active
+ *   version. The prompt lives in a separate section and is left untouched.
+ *   Caller must publish_draft to go live.
  * - Non-versioned agent: replaces the workflow's tools directly (the prompt is
  *   re-sent unchanged because the workflow update requires a non-empty prompt).
  *
@@ -66,34 +96,28 @@ export type PersistToolsResult =
 export async function persistAgentTools(
   agent: IAgentDTO,
   prompt: string | null,
-  tools: any[]
+  tools: any[],
+  draftId?: string
 ): Promise<PersistToolsResult> {
   const agentId = agent._id;
 
   if (agent.activeVersionId) {
-    const createDraftResult = await atomsApi("POST", `/agent/${encodeURIComponent(agentId)}/drafts`, {
-      sourceVersionId: agent.activeVersionId,
-    });
-    if (!createDraftResult.ok) {
-      return { ok: false, message: `Failed to create draft: ${formatApiError(createDraftResult)}` };
-    }
-
-    const draft = createDraftResult.data?.data ?? createDraftResult.data;
-    const draftId = draft?.draftId as string | undefined;
+    const target = await resolveTargetDraft(agentId, agent.activeVersionId, draftId);
+    if (!target.ok) return target;
 
     const updateDraftResult = await atomsApi(
       "PATCH",
-      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(draftId ?? "")}/config`,
+      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(target.draftId)}/config`,
       { singlePromptConfig: { tools } }
     );
     if (!updateDraftResult.ok) {
       return {
         ok: false,
-        message: `Draft ${draftId} created but failed to save tools: ${formatApiError(updateDraftResult)}`,
+        message: `Failed to save tools to draft ${target.draftId}: ${formatApiError(updateDraftResult)}`,
       };
     }
 
-    return { ok: true, versioned: true, draftId };
+    return { ok: true, versioned: true, draftId: target.draftId };
   }
 
   // Non-versioned: full workflow replace. The workflow schema requires a
@@ -123,42 +147,38 @@ export async function persistAgentTools(
 /**
  * Persist a flat agent-config payload (e.g. `{ preCallAPI: {...} }`).
  *
- * - Versioned agent: creates a draft and writes the payload to the draft config
- *   via PATCH /agent/:id/drafts/:draftId/config. Caller must publish_draft.
+ * - Versioned agent: writes the payload to a draft's config via
+ *   PATCH /agent/:id/drafts/:draftId/config — an existing draft when `draftId`
+ *   is given (stacking a new revision onto it), else a fresh draft from the
+ *   active version. Caller must publish_draft.
  * - Non-versioned agent: PATCH /agent/:id directly.
  *
  * This mirrors how update_agent_config routes config-field changes.
  */
 export async function persistAgentConfig(
   agent: IAgentDTO,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  draftId?: string
 ): Promise<PersistToolsResult> {
   const agentId = agent._id;
 
   if (agent.activeVersionId) {
-    const createDraftResult = await atomsApi("POST", `/agent/${encodeURIComponent(agentId)}/drafts`, {
-      sourceVersionId: agent.activeVersionId,
-    });
-    if (!createDraftResult.ok) {
-      return { ok: false, message: `Failed to create draft: ${formatApiError(createDraftResult)}` };
-    }
-
-    const draft = createDraftResult.data?.data ?? createDraftResult.data;
-    const draftId = draft?.draftId as string | undefined;
+    const target = await resolveTargetDraft(agentId, agent.activeVersionId, draftId);
+    if (!target.ok) return target;
 
     const updateDraftResult = await atomsApi(
       "PATCH",
-      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(draftId ?? "")}/config`,
+      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(target.draftId)}/config`,
       payload
     );
     if (!updateDraftResult.ok) {
       return {
         ok: false,
-        message: `Draft ${draftId} created but failed to save config: ${formatApiError(updateDraftResult)}`,
+        message: `Failed to save config to draft ${target.draftId}: ${formatApiError(updateDraftResult)}`,
       };
     }
 
-    return { ok: true, versioned: true, draftId };
+    return { ok: true, versioned: true, draftId: target.draftId };
   }
 
   const result = await atomsApi("PATCH", `/agent/${encodeURIComponent(agentId)}`, payload);
@@ -170,4 +190,4 @@ export async function persistAgentConfig(
 
 /** Standard hint appended when changes land in a draft (versioned agents). */
 export const VERSIONED_DRAFT_HINT =
-  "Changes are in draft state (not live yet). Use publish_draft to make them live, or make_call with the draft's version_id to test first.";
+  "Changes are in draft state (not live yet). Pass this draftId as draft_id to other edit tools to stack more changes into the same draft, then publish_draft once to make everything live (or make_call with the draft's version_id to test first).";

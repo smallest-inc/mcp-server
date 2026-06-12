@@ -9,10 +9,16 @@ export function registerRemoveAgentTool(server: McpServer) {
     {
       description:
         "Remove a tool (by name) from a single_prompt agent. Works for any tool type (api_call, transfer_call, etc.). " +
-        "For versioned agents the change is saved as a draft — use publish_draft to make it live. Use get_agent_prompt to see the agent's current tool names.",
+        "For versioned agents the change is saved as a draft — pass `draft_id` to stack onto an existing draft, then publish_draft to make it live. Use get_agent_prompt to see the agent's current tool names.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to remove the tool from"),
         name: z.string().min(1).describe("The exact name of the tool to remove"),
+        draft_id: z
+          .string()
+          .optional()
+          .describe(
+            "Existing draft to write into (stacks this change onto the draft's other edits). Omit to create a new draft from the live version."
+          ),
       },
     },
     async (params) => {
@@ -36,7 +42,7 @@ export function registerRemoveAgentTool(server: McpServer) {
         };
       }
 
-      const persisted = await persistAgentTools(fetched.agent, fetched.prompt, tools);
+      const persisted = await persistAgentTools(fetched.agent, fetched.prompt, tools, params.draft_id);
       if (!persisted.ok) {
         return { content: [{ type: "text" as const, text: persisted.message }] };
       }

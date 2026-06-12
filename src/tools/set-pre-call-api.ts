@@ -13,9 +13,15 @@ export function registerSetPreCallApi(server: McpServer) {
         "Configure (or disable) an agent's pre-call API. This is an HTTP request the platform makes automatically BEFORE the call connects — typically to enrich the agent with data, e.g. look up a customer record by phone number. " +
         "Values extracted via response_variables become {{variables}} you can reference in the prompt and first message. " +
         "This is different from add_agent_tool: a pre-call API always runs once before the call and is not chosen by the LLM, whereas an api_call tool is invoked by the agent during the conversation. " +
-        "There is exactly one pre-call API per agent (this replaces it). For versioned agents the change is saved as a draft — use publish_draft to make it live.",
+        "There is exactly one pre-call API per agent (this replaces it). For versioned agents the change is saved as a draft — pass `draft_id` to stack onto an existing draft, then publish_draft to make it live.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to configure"),
+        draft_id: z
+          .string()
+          .optional()
+          .describe(
+            "Existing draft to write into (stacks this change onto the draft's other edits). Omit to create a new draft from the live version."
+          ),
         enabled: z
           .boolean()
           .optional()
@@ -109,7 +115,7 @@ export function registerSetPreCallApi(server: McpServer) {
       const queryParams = params.query_params ?? current?.queryParams;
       if (queryParams !== undefined) preCallAPI.queryParams = queryParams;
 
-      const persisted = await persistAgentConfig(agent, { preCallAPI });
+      const persisted = await persistAgentConfig(agent, { preCallAPI }, params.draft_id);
       if (!persisted.ok) {
         return { content: [{ type: "text" as const, text: persisted.message }] };
       }
