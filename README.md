@@ -76,7 +76,10 @@ Reload your editor, then type: **"List all my agents"**
 |---|---|
 | `create_agent` | Create a new AI voice agent |
 | `update_agent_prompt` | Update an agent's system prompt / instructions |
-| `update_agent_config` | Update agent settings — name, language, voice, first message, etc. |
+| `update_agent_config` | Update agent settings — name, language, voice, STT, first message, etc. |
+| `add_agent_tool` | Add or update an API-call tool the agent can invoke during a call |
+| `remove_agent_tool` | Remove a tool from an agent by name |
+| `set_pre_call_api` | Configure (or disable) the pre-call API that runs before a call to enrich variables |
 | `delete_agent` | Archive (soft-delete) or unarchive an agent |
 | `publish_draft` | Publish or discard a draft on a versioned agent |
 
