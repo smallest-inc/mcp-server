@@ -9,7 +9,8 @@ export function registerUpdateAgentPrompt(server: McpServer) {
     "update_agent_prompt",
     {
       description:
-        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents. Optionally update the first message too. For versioned agents, changes are saved as a draft — use publish_draft to make them live.",
+        "Update an agent's system prompt / instructions. Pass the full new prompt text. Only works for single_prompt agents. Optionally update the first message too. " +
+        "For versioned agents, changes are saved as a draft — pass `draft_id` to stack onto an existing draft (e.g. one returned by add_agent_tool or set_pre_call_api), then publish_draft once to make everything live.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         prompt: z.string().describe("The new system prompt for the agent"),
@@ -17,6 +18,12 @@ export function registerUpdateAgentPrompt(server: McpServer) {
           .string()
           .optional()
           .describe("Update the first message the agent says when a call starts (max 500 chars)"),
+        draft_id: z
+          .string()
+          .optional()
+          .describe(
+            "Existing draft to write into (stacks this change onto the draft's other edits). Omit to create a new draft from the live version."
+          ),
       },
     },
     async (params) => {
@@ -52,25 +59,37 @@ export function registerUpdateAgentPrompt(server: McpServer) {
 
       // --- Versioned agent: use draft flow ---
       if (isVersioned) {
-        const createDraftResult = await atomsApi(
-          "POST",
-          `/agent/${encodeURIComponent(params.agent_id)}/drafts`,
-          { sourceVersionId: agent.activeVersionId }
-        );
+        let draftId = params.draft_id;
 
-        if (!createDraftResult.ok) {
+        if (!draftId) {
+          const createDraftResult = await atomsApi(
+            "POST",
+            `/agent/${encodeURIComponent(params.agent_id)}/drafts`,
+            { sourceVersionId: agent.activeVersionId }
+          );
+
+          if (!createDraftResult.ok) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Failed to create draft for prompt update: ${formatApiError(createDraftResult)}`,
+                },
+              ],
+            };
+          }
+
+          const draft = createDraftResult.data?.data ?? createDraftResult.data;
+          draftId = draft?.draftId;
+        }
+
+        if (!draftId) {
           return {
             content: [
-              {
-                type: "text" as const,
-                text: `Failed to create draft for prompt update: ${formatApiError(createDraftResult)}`,
-              },
+              { type: "text" as const, text: "Draft created but no draftId returned by the API." },
             ],
           };
         }
-
-        const draft = createDraftResult.data?.data ?? createDraftResult.data;
-        const draftId = draft?.draftId;
 
         const configBody: Record<string, unknown> = {
           singlePromptConfig: { prompt: params.prompt },
@@ -90,7 +109,7 @@ export function registerUpdateAgentPrompt(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Draft ${draftId} created but failed to update prompt: ${formatApiError(updateDraftResult)}`,
+                text: `Failed to update prompt on draft ${draftId}: ${formatApiError(updateDraftResult)}`,
               },
             ],
           };
@@ -107,7 +126,7 @@ export function registerUpdateAgentPrompt(server: McpServer) {
                   agentId: params.agent_id,
                   draftId,
                   status: "draft",
-                  hint: "Changes are in draft state (not live yet). Use publish_draft to make them live, or make_call with version_id to test the draft first.",
+                  hint: "Changes are in draft state (not live yet). Pass this draftId as draft_id to other edit tools to stack more changes into the same draft, then publish_draft once to make everything live.",
                 },
                 null,
                 2
