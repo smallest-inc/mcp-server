@@ -31,9 +31,11 @@ export function registerTextToSpeech(server: McpServer) {
           .default("emily")
           .describe("Voice ID to use (e.g. emily, daniel, rachel, yuvika). Use get_voices to see available voices."),
         model: z
-          .enum(["lightning-v3.1", "lightning-v3.2", "lightning-v2", "lightning-large"])
-          .default("lightning-v3.1")
-          .describe("TTS model to use. Default: lightning-v3.1"),
+          .enum(["lightning_v3.1", "lightning_v3.1_pro"])
+          .default("lightning_v3.1")
+          .describe(
+            "TTS model. lightning_v3.1 (default) or lightning_v3.1_pro (Lightning V3.1 Pro — higher quality, curated voices). Default: lightning_v3.1"
+          ),
         language: z
           .string()
           .default("en")
@@ -47,7 +49,7 @@ export function registerTextToSpeech(server: McpServer) {
           .default(24000)
           .describe("Audio sample rate in Hz (8000, 16000, 24000, 44100). Default: 24000"),
         output_format: z
-          .enum(["wav", "mp3", "pcm", "mulaw"])
+          .enum(["wav", "mp3", "pcm", "ulaw", "alaw"])
           .default("wav")
           .describe("Output audio format. Default: wav"),
       },
@@ -56,18 +58,30 @@ export function registerTextToSpeech(server: McpServer) {
       const body = {
         text: params.text,
         voice_id: params.voice_id,
+        model: params.model,
         language: params.language,
         speed: params.speed,
         sample_rate: params.sample_rate,
         output_format: params.output_format,
       };
 
-      const url = `${WAVES_API_URL}/${params.model}/get_speech`;
+      // Waves v4: single /tts endpoint, model selected via the request body.
+      const url = `${WAVES_API_URL}/tts`;
+
+      // The Accept header signals the desired audio container to the server.
+      const acceptByFormat: Record<string, string> = {
+        wav: "audio/wav",
+        mp3: "audio/mpeg",
+        pcm: "audio/pcm",
+        ulaw: "audio/basic",
+        alaw: "audio/x-alaw-basic",
+      };
 
       const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: acceptByFormat[params.output_format] ?? "audio/wav",
           Authorization: `Bearer ${getApiKey()}`,
         },
         body: JSON.stringify(body),
