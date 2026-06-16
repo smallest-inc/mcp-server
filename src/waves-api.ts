@@ -1,4 +1,5 @@
-const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
+import { WAVES_API_URL } from "./config.js";
+
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface WavesApiResult {

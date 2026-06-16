@@ -1,6 +1,6 @@
 import { getAuthenticatedOrg } from "./auth.js";
+import { ATOMS_API_URL } from "./config.js";
 
-const ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface ApiResult {

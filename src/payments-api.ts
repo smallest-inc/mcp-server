@@ -1,6 +1,6 @@
 import { getAuthenticatedOrg } from "./auth.js";
+import { PAYMENTS_API_URL } from "./config.js";
 
-const PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface PaymentsApiResult {

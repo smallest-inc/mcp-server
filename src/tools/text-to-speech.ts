@@ -5,8 +5,8 @@ import { homedir } from "os";
 import { join } from "path";
 
 import { formatWavesApiError } from "../waves-api.js";
+import { WAVES_API_URL } from "../config.js";
 
-const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
 const getApiKey = () => {
   const key = process.env.ATOMS_API_KEY;
   if (!key) throw new Error("ATOMS_API_KEY environment variable is required");
