@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { resolveProModelId } from "../voice-catalog.js";
 
 export function registerCreateAgent(server: McpServer) {
   server.registerTool(
@@ -46,7 +47,7 @@ export function registerCreateAgent(server: McpServer) {
                     "other",
                   ])
                   .describe(
-                    "Voice model to use. To use a Lightning V3.1 Pro voice, set model to waves_lightning_v3_1 and pick a voiceId whose supportedModels include 'lightning-v3.1-pro' (see get_voices) — the platform routes it to the Pro pool automatically."
+                    "Voice model to use. To use a Lightning V3.1 Pro voice, set model to waves_lightning_v3_1 and pick a voiceId whose supportedModels include 'lightning-v3.1-pro' (see get_voices) — Pro pool routing (modelId) is resolved and applied automatically."
                   ),
                 voiceId: z.string().describe("Voice ID (e.g. rachel, nyah, etc.)"),
               })
@@ -133,8 +134,20 @@ export function registerCreateAgent(server: McpServer) {
       if (params.name !== undefined) body.name = params.name;
       if (params.description !== undefined) body.description = params.description;
       if (params.synthesizer !== undefined) {
+        // Pro voices live only in the lightning-v3.1-pro pool; supply modelId so the
+        // request routes there. Without it Waves falls back to the standard pool and
+        // rejects the voice at call time ("Invalid Voice ID").
+        let voiceConfig: Record<string, unknown> | undefined = params.synthesizer.voiceConfig;
+        if (params.synthesizer.voiceConfig) {
+          const modelId = await resolveProModelId(
+            params.synthesizer.voiceConfig.model,
+            params.synthesizer.voiceConfig.voiceId
+          );
+          if (modelId) voiceConfig = { ...params.synthesizer.voiceConfig, modelId };
+        }
+
         body.synthesizer = {
-          ...(params.synthesizer.voiceConfig && { voiceConfig: params.synthesizer.voiceConfig }),
+          ...(voiceConfig && { voiceConfig }),
           ...(params.synthesizer.speed !== undefined && { speed: params.synthesizer.speed }),
           ...(params.synthesizer.consistency !== undefined && { consistency: params.synthesizer.consistency }),
           ...(params.synthesizer.similarity !== undefined && { similarity: params.synthesizer.similarity }),
