@@ -4,6 +4,7 @@ import { registerActivateVersion } from "./activate-version.js";
 import { registerAddAgentTool } from "./add-agent-tool.js";
 import { registerAddAudienceMembers } from "./add-audience-members.js";
 import { registerAnalyticsTools } from "./analytics.js";
+import { registerChatWithAgent } from "./chat.js";
 import { registerCompareVersionMetrics } from "./compare-version-metrics.js";
 import { registerCreateAgent } from "./create-agent.js";
 import { registerCreateCampaign } from "./create-campaign.js";
@@ -112,6 +113,7 @@ export function registerTools(server: McpServer) {
   // Calls
   registerListCalls(server);
   registerMakeCall(server);
+  registerChatWithAgent(server);
   registerDebugCall(server);
   registerGetUsageStats(server);
 
