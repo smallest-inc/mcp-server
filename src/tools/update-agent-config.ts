@@ -177,7 +177,9 @@ export function registerUpdateAgentConfig(server: McpServer) {
         telephony_product_ids: z
           .array(z.string())
           .optional()
-          .describe("List of telephony product IDs (phone numbers) to assign to this agent"),
+          .describe(
+            "Telephony product IDs (see get_phone_numbers) to assign to this agent. Takes effect IMMEDIATELY — number assignment is agent metadata, not versioned config, so no draft/publish is involved. Replaces the agent's current numbers; assigning a number already attached to another agent moves it. Pass [] to unassign all."
+          ),
       },
     },
     async (params) => {
@@ -311,10 +313,15 @@ export function registerUpdateAgentConfig(server: McpServer) {
 
       // --- Versioned agent: create draft → update draft config ---
 
-      // Separate metadata fields (can still be updated directly on the agent)
+      // Separate metadata fields (can still be updated directly on the agent).
+      // Must mirror the backend's metadataOnlyFields: telephonyProductId in
+      // particular ONLY works here — the direct PATCH writes the number→agent
+      // binding into the products registry. Sent via the draft path it is
+      // silently inert: the draft accepts the key but nothing ever assigns the
+      // number, so it looks like it worked and inbound routing never changes.
       const metadataFields: Record<string, unknown> = {};
       const configFields: Record<string, unknown> = {};
-      const METADATA_KEYS = ["name", "description", "allowInboundCall"];
+      const METADATA_KEYS = ["name", "description", "allowInboundCall", "telephonyProductId"];
 
       for (const [key, value] of Object.entries(body)) {
         if (METADATA_KEYS.includes(key)) {

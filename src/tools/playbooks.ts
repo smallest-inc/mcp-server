@@ -78,14 +78,6 @@ const playbookInputSchema = z.object({
     .array(apiToolSchema)
     .optional()
     .describe("API-call tools scoped to this playbook (same shape as add_agent_tool). Do NOT list identity tools here — those are shared, set via configure_playbooks."),
-  add_end_call_tool: z
-    .boolean()
-    .optional()
-    .describe("Add an end_call action tool so the agent can hang up from this playbook when the caller is done. Without it (on any playbook) the agent cannot end calls."),
-  transfer_call_number: z
-    .string()
-    .optional()
-    .describe("Add a transfer_call action tool that cold-transfers to this number (E.164, e.g. +9198...)."),
 });
 
 type PlaybookInput = z.infer<typeof playbookInputSchema>;
@@ -106,28 +98,10 @@ function slugId(name: string, taken: Set<string>): string {
 }
 
 function buildPlaybookTools(p: PlaybookInput): PlaybookTool[] {
-  const tools: PlaybookTool[] = (p.tools ?? []).map((t) => buildApiCallTool(t as ApiToolInput));
-  if (p.add_end_call_tool) {
-    tools.push({
-      type: "end_call",
-      name: "end_call",
-      description:
-        "End the call. Use when the customer says goodbye, confirms they have no more questions, or asks to hang up. Say a short farewell first, then call this.",
-      enabled: true,
-    });
-  }
-  if (p.transfer_call_number) {
-    tools.push({
-      type: "transfer_call",
-      name: "transfer_call",
-      description: "Transfer the caller to a human agent. Tell the caller you are transferring them first.",
-      transferNumber: p.transfer_call_number,
-      transferOption: { type: "cold_transfer" },
-      onHoldMusic: "none",
-      enabled: true,
-    });
-  }
-  return tools;
+  // Playbook tools are api_call ONLY. end_call / transfer_call are AGENT-LEVEL
+  // config (configure_call_actions) — the runtime injects them into every
+  // playbook and ignores any embedded in a playbook.
+  return (p.tools ?? []).map((t) => buildApiCallTool(t as ApiToolInput));
 }
 
 function buildPlaybook(p: PlaybookInput, taken: Set<string>): Playbook {
@@ -239,7 +213,7 @@ function summarize(section: PlaybooksSection) {
 }
 
 /** Publish-blocking gaps worth surfacing after every edit. */
-function publishWarnings(section: PlaybooksSection): string[] {
+function publishWarnings(section: PlaybooksSection, agent?: any): string[] {
   const warnings: string[] = [];
   const active = section.playbooks.filter((p) => p.enabled !== false);
   const fallback = section.playbooks.find((p) => p.id === section.router.fallbackPlaybookId);
@@ -252,8 +226,11 @@ function publishWarnings(section: PlaybooksSection): string[] {
     warnings.push("A playbook requires weak/strong auth but auth.weakTools is empty — publish will fail. Add identity tools via configure_playbooks weak_auth_tools.");
   if (needsStrong && (section.auth?.strongTools ?? []).length === 0)
     warnings.push("A playbook requires strong auth but auth.strongTools is empty — publish will fail. Add identity tools via configure_playbooks strong_auth_tools.");
-  if (!active.some((p) => (p.tools ?? []).some((t) => t.type === "end_call")))
-    warnings.push("No playbook has an end_call tool — the agent will have no way to end calls.");
+  const agentTools = (agent?._resolvedConfig?.tools ?? []) as any[];
+  if (!agentTools.some((t) => t?.type === "end_call" && t?.enabled !== false))
+    warnings.push(
+      "The agent has no end_call configured — it will have no way to end calls. end_call is AGENT-LEVEL config (the console's Tools tab): enable it with configure_call_actions."
+    );
   return warnings;
 }
 
@@ -352,7 +329,7 @@ export function registerAddPlaybooks(server: McpServer) {
       const save = await savePlaybooks(params.agent_id, draft.draftId, section);
       if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
 
-      const warnings = publishWarnings(section);
+      const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Added ${added.length} playbook(s) to draft`,
         draft_id: draft.draftId,
@@ -389,9 +366,9 @@ export function registerUpdatePlaybook(server: McpServer) {
         tools: z
           .array(apiToolSchema)
           .optional()
-          .describe("REPLACES the playbook's API-call tools (end_call/transfer_call tools are preserved unless the flags below change them)"),
-        add_end_call_tool: z.boolean().optional().describe("true = ensure an end_call tool on this playbook; false = remove it"),
-        transfer_call_number: z.string().optional().describe("Set/replace a transfer_call tool to this number ('' to remove)"),
+          .describe(
+            "REPLACES the playbook's API-call tools. end_call/transfer_call are agent-level config (configure_call_actions), never playbook tools — any legacy ones embedded here are dropped on write."
+          ),
       },
     },
     async (params) => {
@@ -433,45 +410,18 @@ export function registerUpdatePlaybook(server: McpServer) {
       }
       if (params.enabled !== undefined) pb.enabled = params.enabled;
 
-      let tools = pb.tools ?? [];
       if (params.tools !== undefined) {
-        const kept = tools.filter((t) => t.type === "end_call" || t.type === "transfer_call");
-        tools = [...params.tools.map((t) => buildApiCallTool(t as ApiToolInput)), ...kept];
+        // Wholesale replace with api_call tools; legacy playbook-embedded
+        // action tools are intentionally dropped (agent-level config owns them).
+        pb.tools = params.tools.map((t) => buildApiCallTool(t as ApiToolInput));
       }
-      if (params.add_end_call_tool !== undefined) {
-        tools = tools.filter((t) => t.type !== "end_call");
-        if (params.add_end_call_tool) {
-          tools.push({
-            type: "end_call",
-            name: "end_call",
-            description:
-              "End the call. Use when the customer says goodbye, confirms they have no more questions, or asks to hang up. Say a short farewell first, then call this.",
-            enabled: true,
-          });
-        }
-      }
-      if (params.transfer_call_number !== undefined) {
-        tools = tools.filter((t) => t.type !== "transfer_call");
-        if (params.transfer_call_number !== "") {
-          tools.push({
-            type: "transfer_call",
-            name: "transfer_call",
-            description: "Transfer the caller to a human agent. Tell the caller you are transferring them first.",
-            transferNumber: params.transfer_call_number,
-            transferOption: { type: "cold_transfer" },
-            onHoldMusic: "none",
-            enabled: true,
-          });
-        }
-      }
-      pb.tools = tools;
 
       const draft = await resolveDraft(params.agent_id, params.draft_id, fetched.agent);
       if (!draft.ok) return textErr(draft.message);
       const save = await savePlaybooks(params.agent_id, draft.draftId, section);
       if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
 
-      const warnings = publishWarnings(section);
+      const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Playbook "${pb.id}" updated on draft`,
         draft_id: draft.draftId,
@@ -555,7 +505,7 @@ export function registerConfigurePlaybooks(server: McpServer) {
       const save = await savePlaybooks(params.agent_id, draft.draftId, section);
       if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
 
-      const warnings = publishWarnings(section);
+      const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Updated: ${changed.join(", ")}`,
         draft_id: draft.draftId,
