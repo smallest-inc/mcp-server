@@ -26,15 +26,41 @@ export interface ChatClientOptions {
   variables?: Record<string, string | number | boolean>;
 }
 
-interface ReplyWaiter {
+/**
+ * Collects ONE agent turn. A turn is often several messages — a filler spoken
+ * when a tool starts ("Let me find your details…"), then the real answer once
+ * the tool returns. We accumulate agent messages and resolve after `quietMs`
+ * of silence (the turn has settled) or when the session closes, rather than
+ * resolving on the first message and racing ahead of the tool round.
+ */
+interface TurnCollector {
+  parts: string[];
   resolve: (text: string) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  hardTimer: ReturnType<typeof setTimeout>;
+  quietTimer: ReturnType<typeof setTimeout> | null;
+  /** Silence after a substantive message before the turn is considered done. */
+  quietMs: number;
+  /** Silence to allow after a filler ("…"), while its tool is still running. */
+  toolWaitMs: number;
+}
+
+/**
+ * Fillers spoken while a tool runs conventionally end with an ellipsis
+ * ("Let me find your details…", "Fetching today's fund value…"). After one we
+ * wait `toolWaitMs` for the real answer; after a substantive message we settle
+ * quickly (`quietMs`). This keeps normal turns fast without cutting tool rounds.
+ */
+function looksLikeFiller(text: string): boolean {
+  const t = text.trim();
+  return t.endsWith("…") || t.endsWith("...");
 }
 
 export class AtomsChatClient {
   private ws: WebSocket | null = null;
-  private waiters: ReplyWaiter[] = [];
+  private activeTurn: TurnCollector | null = null;
+  /** Resolvers waiting for the session to close (drain after the last turn). */
+  private closeWaiters: Array<() => void> = [];
 
   callId = "";
   sessionId = "";
@@ -108,11 +134,15 @@ export class AtomsChatClient {
           clearTimeout(timer);
           reject(err);
         }
-        this.failWaiters(err);
+        this.failActiveTurn(err);
       });
       ws.on("close", () => {
         this.closed = true;
-        this.failWaiters(new Error(`Chat session closed${this.closedReason ? `: ${this.closedReason}` : ""}`));
+        // A close during a turn usually means the agent ended the call (e.g.
+        // end_call fired): resolve the turn with what we collected rather than
+        // erroring. Only error if the turn produced nothing at all.
+        this.settleTurn(true);
+        this.resolveCloseWaiters();
       });
     });
 
@@ -129,16 +159,43 @@ export class AtomsChatClient {
   }
 
   /**
-   * Send one user message and resolve with the agent's next reply.
-   * Rejects if the session is closed or no reply arrives within `timeoutMs`.
+   * Send one user message and resolve with the agent's FULL turn — every agent
+   * message until the turn settles (`quietMs` of silence) or the session closes.
+   * This holds the connection through a tool round (filler → tool → answer)
+   * instead of returning on the filler and racing ahead. Rejects only if the
+   * session is closed up front or the turn produces nothing within `timeoutMs`.
    */
-  async send(text: string, timeoutMs = 25000): Promise<string> {
+  async send(text: string, timeoutMs = 30000, quietMs = 2500): Promise<string> {
     if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error(`Chat session is not open${this.closedReason ? ` (closed: ${this.closedReason})` : ""}`);
     }
-    const reply = this.nextAgentReply(timeoutMs);
+    // After a filler, allow up to most of the hard budget for the tool to return.
+    const toolWaitMs = Math.min(timeoutMs - 2000, 15000);
+    const reply = this.collectAgentTurn(timeoutMs, quietMs, Math.max(toolWaitMs, quietMs));
     this.ws.send(JSON.stringify({ type: "input_text.send", text }));
     return reply;
+  }
+
+  /**
+   * Wait for the agent to close the session on its own (e.g. an end_call
+   * hangup), up to `ms`. Used to drain the last turn so a natural agent hangup
+   * is observed before we tear the socket down. Resolves immediately if already
+   * closed, and after `ms` if the agent never closes (caller then closes).
+   */
+  waitForClose(ms: number): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        const i = this.closeWaiters.indexOf(done);
+        if (i >= 0) this.closeWaiters.splice(i, 1);
+        resolve();
+      }, ms);
+      this.closeWaiters.push(done);
+    });
   }
 
   /** Send session.close and shut the socket. */
@@ -156,19 +213,40 @@ export class AtomsChatClient {
 
   // ---------------------------------------------------------------------------
 
-  private nextAgentReply(timeoutMs: number): Promise<string> {
+  private collectAgentTurn(timeoutMs: number, quietMs: number, toolWaitMs: number): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      const waiter: ReplyWaiter = {
+      const collector: TurnCollector = {
+        parts: [],
         resolve,
         reject,
-        timer: setTimeout(() => {
-          const i = this.waiters.indexOf(waiter);
-          if (i >= 0) this.waiters.splice(i, 1);
-          reject(new Error(`Timed out after ${timeoutMs}ms waiting for the agent's reply`));
+        quietMs,
+        toolWaitMs,
+        quietTimer: null,
+        hardTimer: setTimeout(() => {
+          if (this.activeTurn !== collector) return;
+          this.activeTurn = null;
+          if (collector.quietTimer) clearTimeout(collector.quietTimer);
+          // Return what we have if the agent spoke at all (a slow tool that
+          // never fully settled); otherwise it's a genuine no-reply timeout.
+          if (collector.parts.length) resolve(collector.parts.join("\n"));
+          else reject(new Error(`Timed out after ${timeoutMs}ms waiting for the agent's reply`));
         }, timeoutMs),
       };
-      this.waiters.push(waiter);
+      this.activeTurn = collector;
     });
+  }
+
+  /** Resolve the active turn with whatever has been collected. */
+  private settleTurn(closing = false): void {
+    const t = this.activeTurn;
+    if (!t) return;
+    // On a socket close with nothing collected, let failActiveTurn surface the
+    // error instead of resolving an empty turn.
+    if (closing && t.parts.length === 0) return;
+    this.activeTurn = null;
+    clearTimeout(t.hardTimer);
+    if (t.quietTimer) clearTimeout(t.quietTimer);
+    t.resolve(t.parts.join("\n"));
   }
 
   private handleMessage(raw: WebSocket.RawData): void {
@@ -193,12 +271,17 @@ export class AtomsChatClient {
         const role: ChatTurn["role"] = event.role === "user" ? "user" : "agent";
         const text = String(event.text ?? "");
         this.transcript.push({ role, text });
-        if (role === "agent") {
-          const waiter = this.waiters.shift();
-          if (waiter) {
-            clearTimeout(waiter.timer);
-            waiter.resolve(text);
-          }
+        if (role === "agent" && this.activeTurn) {
+          // Accumulate this message into the current turn and (re)arm the quiet
+          // timer — the turn resolves once the agent stops for `quietMs`, so a
+          // filler followed by a tool result counts as one settled reply.
+          const t = this.activeTurn;
+          t.parts.push(text);
+          if (t.quietTimer) clearTimeout(t.quietTimer);
+          // A filler ("…") means a tool is still running — wait longer for its
+          // answer; a substantive message means the turn is likely done — settle.
+          const wait = looksLikeFiller(text) ? t.toolWaitMs : t.quietMs;
+          t.quietTimer = setTimeout(() => this.settleTurn(), wait);
         }
         break;
       }
@@ -206,9 +289,15 @@ export class AtomsChatClient {
       case "session.closed": {
         this.closed = true;
         this.closedReason = String(event.reason ?? "ended");
-        const err = new Error(`Chat session closed: ${this.closedReason}`);
-        if (this.onConnectFailure) this.onConnectFailure(err);
-        this.failWaiters(err);
+        if (this.onConnectFailure) {
+          // Closed before session.created — a genuine connect failure.
+          this.onConnectFailure(new Error(`Chat session closed: ${this.closedReason}`));
+        } else {
+          // The agent ended the call (e.g. end_call): resolve the in-flight turn
+          // with what it produced (the farewell), then wake any drain waiters.
+          this.settleTurn(true);
+        }
+        this.resolveCloseWaiters();
         break;
       }
 
@@ -221,11 +310,7 @@ export class AtomsChatClient {
           this.onConnectFailure(err);
           break;
         }
-        const waiter = this.waiters.shift();
-        if (waiter) {
-          clearTimeout(waiter.timer);
-          waiter.reject(err);
-        }
+        this.failActiveTurn(err);
         break;
       }
 
@@ -235,12 +320,18 @@ export class AtomsChatClient {
     }
   }
 
-  private failWaiters(err: Error): void {
-    const waiters = this.waiters.splice(0);
-    for (const w of waiters) {
-      clearTimeout(w.timer);
-      w.reject(err);
-    }
+  private failActiveTurn(err: Error): void {
+    const t = this.activeTurn;
+    if (!t) return;
+    this.activeTurn = null;
+    clearTimeout(t.hardTimer);
+    if (t.quietTimer) clearTimeout(t.quietTimer);
+    t.reject(err);
+  }
+
+  private resolveCloseWaiters(): void {
+    const waiters = this.closeWaiters.splice(0);
+    for (const fn of waiters) fn();
   }
 
   private delay(ms: number): Promise<void> {
