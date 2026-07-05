@@ -3,8 +3,9 @@ import { z } from "zod";
 
 import { fetchAgentAndTools, persistAgentTools, VERSIONED_DRAFT_HINT } from "./agent-tools-helper.js";
 
-/** Schema for one API-call tool — used both for the single-tool params and the batch `tools` array. */
-const apiToolSchema = z.object({
+/** Schema for one API-call tool — used both for the single-tool params and the batch `tools` array.
+ *  Exported for reuse by the Playbooks tools (playbook tools use the same function shape). */
+export const apiToolSchema = z.object({
   name: z
     .string()
     .min(1)
@@ -69,10 +70,10 @@ const apiToolSchema = z.object({
   enabled: z.boolean().optional().describe("Whether the tool is active (default true)"),
 });
 
-type ApiToolInput = z.infer<typeof apiToolSchema>;
+export type ApiToolInput = z.infer<typeof apiToolSchema>;
 
 /** Map a tool input to the backend's expected api_call shape. */
-function buildApiCallTool(t: ApiToolInput): Record<string, unknown> {
+export function buildApiCallTool(t: ApiToolInput): Record<string, unknown> {
   const tool: Record<string, unknown> = {
     type: "api_call",
     name: t.name,

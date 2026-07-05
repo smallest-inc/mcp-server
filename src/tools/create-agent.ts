@@ -9,10 +9,16 @@ export function registerCreateAgent(server: McpServer) {
     "create_agent",
     {
       description:
-        "Create a new AI agent in your organization. The agent is created as a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1) by default. The STT transcriber defaults to Pulse — change it (e.g. to pulse-legacy) via update_agent_config after creation. Returns the created agent's ID. Set the agent prompt via update_agent_prompt after creation.",
+        "Create a new AI agent in your organization. By default the agent is a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1); set workflow_type to multi_agents for a Playbooks agent (an intent router + specialist SOP playbooks — add them via add_playbooks after creation). The STT transcriber defaults to Pulse — change it (e.g. to pulse-legacy) via update_agent_config after creation. Returns the created agent's ID. For single_prompt agents, set the prompt via update_agent_prompt after creation.",
       inputSchema: {
         name: z.string().optional().describe("Name for the new agent"),
         description: z.string().optional().describe("Short description of what the agent does"),
+        workflow_type: z
+          .enum(["single_prompt", "multi_agents"])
+          .optional()
+          .describe(
+            "Agent type. single_prompt (default) = one prompt + tools. multi_agents = Playbooks: an intent router classifies each caller turn and routes to a specialist playbook (SOP) with its own prompt and scoped tools — configure via add_playbooks / configure_playbooks. multi_agents is domain-gated; the API returns 403 if your account isn't allowlisted."
+          ),
         language: z
           .object({
             default: z
@@ -121,9 +127,10 @@ export function registerCreateAgent(server: McpServer) {
       const lang = params.language?.default ?? "en";
       const supported = params.language?.supported ?? [lang];
 
+      const workflowType = params.workflow_type ?? "single_prompt";
       const body: Record<string, unknown> = {
         origin: "mcp",
-        workflowType: "single_prompt",
+        workflowType,
         language: {
           default: lang,
           supported,
@@ -199,12 +206,16 @@ export function registerCreateAgent(server: McpServer) {
                 message: "Agent created successfully",
                 agentId,
                 defaults_applied: {
-                  workflowType: "single_prompt",
+                  workflowType,
                   slmModel: params.slm_model ?? "gpt-4.1",
                   voice: params.synthesizer?.voiceConfig
                     ? `${params.synthesizer.voiceConfig.voiceId} (${params.synthesizer.voiceConfig.model})`
                     : "daniel (waves_lightning_v3_1)",
                 },
+                ...(workflowType === "multi_agents" && {
+                  next_steps:
+                    "Add SOPs with add_playbooks (they save to a draft), set the router/auth via configure_playbooks if needed, then publish_draft to go live.",
+                }),
                 ...(warnings.length > 0 && { warnings }),
               },
               null,

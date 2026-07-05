@@ -69,13 +69,17 @@ Reload your editor, then type: **"List all my agents"**
 | `get_campaigns` | List outbound calling campaigns with status and progress |
 | `get_phone_numbers` | List phone numbers owned by your organization |
 | `get_voices` | List available voices with gender, language, and model filters |
+| `get_playbooks` | Read a multi-agent (Playbooks) agent's SOPs, intent router, and shared auth tools |
 
 ### Write
 
 | Tool | Description |
 |---|---|
-| `create_agent` | Create a new AI voice agent |
+| `create_agent` | Create a new AI voice agent (`single_prompt`, or `multi_agents` for Playbooks) |
 | `update_agent_prompt` | Update an agent's system prompt / instructions |
+| `add_playbooks` | Add SOP playbooks (intent + prompt + scoped tools + auth level) to a multi-agent |
+| `update_playbook` | Edit, archive, or restore one playbook |
+| `configure_playbooks` | Set the intent router, conversation guide, and shared weak/strong auth tools |
 | `update_agent_config` | Update agent settings — name, language, voice, STT, first message, etc. |
 | `add_agent_tool` | Add or update an API-call tool the agent can invoke during a call |
 | `remove_agent_tool` | Remove a tool from an agent by name |
