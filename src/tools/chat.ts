@@ -20,8 +20,10 @@ export function registerChatWithAgent(server: McpServer) {
     {
       description:
         "Hold a TEXT conversation with a published agent over the realtime chat WebSocket (mode=chat) — " +
-        "no audio, no phone, just text in / text out. Sends each message in `messages` in order, " +
-        "waiting for the agent's reply between turns, and returns the full transcript. " +
+        "no audio, no phone, just text in / text out. Sends each message in `messages` in order, waiting for " +
+        "each agent turn to FULLY settle before sending the next — a turn can be several messages (a filler " +
+        "while a tool runs, then the answer), so tool-using flows (auth, lookups) complete instead of being " +
+        "cut off. Returns the full transcript. " +
         "Use this to test an agent's prompt/behaviour programmatically (e.g. an automated build → test → " +
         "evaluate → refine loop): run a scripted conversation, read the transcript, then adjust the prompt " +
         "with update_agent_prompt and run again. This places a real (chargeable) chat session on the agent. " +
@@ -44,8 +46,19 @@ export function registerChatWithAgent(server: McpServer) {
           .int()
           .min(1000)
           .max(120000)
-          .default(25000)
-          .describe("Max time to wait for each agent reply before giving up on that turn"),
+          .default(30000)
+          .describe("Hard cap on how long to wait for a single agent turn before giving up on it"),
+        settle_ms: z
+          .number()
+          .int()
+          .min(500)
+          .max(20000)
+          .default(2500)
+          .describe(
+            "Silence after a SUBSTANTIVE agent message before the turn counts as finished. Fillers (messages " +
+              "ending in '…', spoken while a tool runs) are waited on much longer automatically, so this can stay " +
+              "small; raise it only if the agent sends its answer in several slow bursts."
+          ),
         greeting_wait_ms: z
           .number()
           .int()
@@ -81,11 +94,17 @@ export function registerChatWithAgent(server: McpServer) {
 
         for (const message of params.messages) {
           try {
-            await client.send(message, params.reply_timeout_ms);
+            await client.send(message, params.reply_timeout_ms, params.settle_ms);
           } catch (err) {
             turnError = err instanceof Error ? err.message : String(err);
             break; // session likely closed/errored — stop sending
           }
+        }
+        // Drain: give the last turn room to finish — including a natural agent
+        // hangup (end_call) — before we tear the socket down, so we don't cut
+        // the conversation short the way an immediate close would.
+        if (!turnError) {
+          await client.waitForClose(params.settle_ms);
         }
       } catch (err) {
         connectError = err instanceof Error ? err.message : String(err);
