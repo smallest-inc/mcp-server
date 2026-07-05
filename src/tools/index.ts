@@ -50,6 +50,7 @@ import {
   registerGetPlaybooks,
   registerUpdatePlaybook,
 } from "./playbooks.js";
+import { registerConfigureCallActions } from "./configure-call-actions.js";
 import { registerPublishDraft } from "./publish-draft.js";
 import { registerRedeemCoupon } from "./redeem-coupon.js";
 import { registerRemoveAgentTool } from "./remove-agent-tool.js";
@@ -84,6 +85,7 @@ export function registerTools(server: McpServer) {
   // Playbooks (multi-agent SOP orchestration)
   registerGetPlaybooks(server);
   registerAddPlaybooks(server);
+  registerConfigureCallActions(server);
   registerUpdatePlaybook(server);
   registerConfigurePlaybooks(server);
 

@@ -77,9 +77,10 @@ Reload your editor, then type: **"List all my agents"**
 |---|---|
 | `create_agent` | Create a new AI voice agent (`single_prompt`, or `multi_agents` for Playbooks) |
 | `update_agent_prompt` | Update an agent's system prompt / instructions |
-| `add_playbooks` | Add SOP playbooks (intent + prompt + scoped tools + auth level) to a multi-agent |
+| `add_playbooks` | Add SOP playbooks (intent + prompt + scoped API tools + auth level) to a multi-agent |
 | `update_playbook` | Edit, archive, or restore one playbook |
 | `configure_playbooks` | Set the intent router, conversation guide, and shared weak/strong auth tools |
+| `configure_call_actions` | Enable/disable end_call and set a transfer number — agent-level, applies across all playbooks |
 | `update_agent_config` | Update agent settings — name, language, voice, STT, first message, etc. |
 | `add_agent_tool` | Add or update an API-call tool the agent can invoke during a call |
 | `remove_agent_tool` | Remove a tool from an agent by name |
