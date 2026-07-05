@@ -3,7 +3,8 @@ interface AuthenticatedOrg {
   userId: string;
 }
 
-const ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
+// Overridable for non-prod environments — must match src/api.ts.
+const ATOMS_API_URL = process.env.ATOMS_API_URL || "https://api.smallest.ai/atoms/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 let cachedOrg: AuthenticatedOrg | null = null;

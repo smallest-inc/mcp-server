@@ -44,6 +44,12 @@ import { registerListDrafts } from "./list-drafts.js";
 import { registerListVersions } from "./list-versions.js";
 import { registerMakeCall } from "./make-call.js";
 import { registerPauseCampaign } from "./pause-campaign.js";
+import {
+  registerAddPlaybooks,
+  registerConfigurePlaybooks,
+  registerGetPlaybooks,
+  registerUpdatePlaybook,
+} from "./playbooks.js";
 import { registerPublishDraft } from "./publish-draft.js";
 import { registerRedeemCoupon } from "./redeem-coupon.js";
 import { registerRemoveAgentTool } from "./remove-agent-tool.js";
@@ -74,6 +80,12 @@ export function registerTools(server: McpServer) {
   registerSetPreCallApi(server);
   registerDeleteAgent(server);
   registerDuplicateAgent(server);
+
+  // Playbooks (multi-agent SOP orchestration)
+  registerGetPlaybooks(server);
+  registerAddPlaybooks(server);
+  registerUpdatePlaybook(server);
+  registerConfigurePlaybooks(server);
 
   // Drafts
   registerListDrafts(server);
