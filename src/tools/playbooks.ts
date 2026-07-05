@@ -275,7 +275,7 @@ export function registerGetPlaybooks(server: McpServer) {
         if (!pb) return textErr(`No playbook with id "${params.playbook_id}". Known ids: ${fetched.section.playbooks.map((p) => p.id).join(", ") || "(none)"}`);
         return text(pb);
       }
-      const warnings = publishWarnings(fetched.section);
+      const warnings = publishWarnings(fetched.section, fetched.agent);
       return text({ ...summarize(fetched.section), ...(warnings.length > 0 && { warnings }) });
     }
   );
