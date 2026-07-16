@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { resolveLiveBranch } from "../versioning.js";
 import type { IAgentDTO } from "../types.js";
 
 export function registerMakeCall(server: McpServer) {
@@ -59,12 +60,17 @@ export function registerMakeCall(server: McpServer) {
       if (params.variables) {
         body.variables = params.variables;
       }
-      // For versioned agents, always include the version ID so the dispatcher
-      // can resolve the agent config. Without it, calls get stuck in queue.
+      // Always include the revision to call so the dispatcher can resolve the
+      // agent config. Use the caller's version_id, else the live branch head.
+      // Best-effort: if the branch can't be resolved, let the backend fall back
+      // to the live config rather than failing the call.
       if (params.version_id) {
         body.versionId = params.version_id;
-      } else if (agent.activeVersionId) {
-        body.versionId = agent.activeVersionId;
+      } else {
+        const live = await resolveLiveBranch(params.agent_id);
+        if (live.ok && live.value.headRevisionId) {
+          body.versionId = live.value.headRevisionId;
+        }
       }
 
       // MCP calls use test slots to avoid consuming production concurrency.

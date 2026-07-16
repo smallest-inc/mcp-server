@@ -2,17 +2,23 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { resolveBranch, saveConfigToBranch } from "../versioning.js";
 import { resolveProModelId } from "../voice-catalog.js";
+import { DRAFT_HINT } from "./agent-tools-helper.js";
 import type { IAgentDTO } from "../types.js";
 
-export function registerUpdateAgentConfig(server: McpServer) {
+export function registerUpdateAgent(server: McpServer) {
   server.registerTool(
-    "update_agent_config",
+    "update_agent",
     {
       description:
-        "Update an agent's configuration (name, language, first message, voice settings, model, variables, etc.). Only provided fields are updated. To update the agent's prompt/instructions, use update_agent_prompt instead. For versioned agents, changes are saved as a draft — use publish_draft to make them live, or test the draft first via make_call with the draft's version_id.",
+        "Update an agent — name, prompt/instructions, first message, voice, model, language, variables, the pre-call API, and other settings. Only provided fields are updated. Config changes are saved to the branch's draft (publish_draft to make them live, or test first with test_agent using include_draft); metadata (name, phone numbers, inbound toggle) applies immediately. To add/remove the agent's API-call tools use add_agent_tool / remove_agent_tool; for end_call/transfer use configure_call_actions.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
+        branch_id: z
+          .string()
+          .optional()
+          .describe("Branch whose draft to edit (from list_branches). Omit to use the live branch; if the agent has multiple branches you'll be asked to pick one."),
         name: z.string().optional().describe("New agent name"),
         description: z.string().optional().describe("Agent description"),
         language: z
@@ -33,6 +39,10 @@ export function registerUpdateAgentConfig(server: McpServer) {
           .string()
           .optional()
           .describe("First message when call starts (max 500 chars)"),
+        prompt: z
+          .string()
+          .optional()
+          .describe("The agent's system prompt / instructions (full text). single_prompt agents only."),
         synthesizer: z
           .object({
             voiceConfig: z
@@ -77,7 +87,7 @@ export function registerUpdateAgentConfig(server: McpServer) {
         global_prompt: z
           .string()
           .optional()
-          .describe("Global system prompt for the agent (max 4000 chars). This is separate from the workflow prompt updated via update_agent_prompt."),
+          .describe("Global system prompt for the agent (max 4000 chars). This is separate from the main prompt (the `prompt` field)."),
         default_variables: z
           .record(z.string(), z.string())
           .optional()
@@ -179,6 +189,36 @@ export function registerUpdateAgentConfig(server: McpServer) {
           .optional()
           .describe(
             "Telephony product IDs (see get_phone_numbers) to assign to this agent. Takes effect IMMEDIATELY — number assignment is agent metadata, not versioned config, so no draft/publish is involved. Replaces the agent's current numbers; assigning a number already attached to another agent moves it. Pass [] to unassign all."
+          ),
+        pre_call_api: z
+          .object({
+            enabled: z
+              .boolean()
+              .optional()
+              .describe("Enable the pre-call API (default true). Pass false to disable it while keeping the saved config."),
+            url: z
+              .string()
+              .url()
+              .optional()
+              .describe("Endpoint URL. Required when enabling. May contain {{variable}} placeholders."),
+            method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional().describe("HTTP method. Default GET."),
+            headers: z.record(z.string(), z.string()).optional().describe("Request headers as key/value pairs."),
+            body: z.record(z.string(), z.any()).optional().describe("Request body as a JSON object (for POST/PUT/PATCH)."),
+            query_params: z.record(z.string(), z.string()).optional().describe("URL query parameters as key/value pairs."),
+            timeout_secs: z.number().min(1).max(30).optional().describe("Request timeout in seconds (1-30). Default 5."),
+            response_variables: z
+              .array(
+                z.object({
+                  variableName: z.string().min(1).describe("Variable name the agent can reference as {{variableName}}"),
+                  jsonPath: z.string().min(1).describe("JSON path into the response, e.g. data.customer.name"),
+                })
+              )
+              .optional()
+              .describe("Extract values from the API response into variables usable in the prompt and first message."),
+          })
+          .optional()
+          .describe(
+            "Configure (or disable) the pre-call API — an HTTP request the platform makes automatically BEFORE the call connects to enrich the agent with data. Runs once and is not chosen by the LLM (unlike add_agent_tool, which the agent invokes during the call)."
           ),
       },
     },
@@ -285,40 +325,53 @@ export function registerUpdateAgentConfig(server: McpServer) {
         };
       }
 
+      // Prompt lives in its own single_prompt section (separate from tools — no clobber).
+      if (params.prompt !== undefined) {
+        body.singlePromptConfig = { prompt: params.prompt };
+      }
+
+      // Pre-call API — build the object, preserving existing fields when not overridden.
+      if (params.pre_call_api !== undefined) {
+        const pc = params.pre_call_api;
+        const current = agent.preCallAPI;
+        const enabling = pc.enabled !== false;
+        const url = pc.url ?? current?.url;
+        if (enabling && (!url || url.trim().length === 0)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "A pre_call_api.url is required to enable the pre-call API (none provided and none currently configured).",
+              },
+            ],
+          };
+        }
+        const preCallAPI: Record<string, unknown> = {
+          isEnabled: enabling,
+          url: url ?? "",
+          method: pc.method ?? current?.method ?? "GET",
+          timeout: pc.timeout_secs ?? current?.timeout ?? 5,
+          responseVariables: pc.response_variables ?? current?.responseVariables ?? [],
+        };
+        const headers = pc.headers ?? current?.headers;
+        if (headers !== undefined) preCallAPI.headers = headers;
+        const pcBody = pc.body ?? current?.body;
+        if (pcBody !== undefined) preCallAPI.body = pcBody;
+        const queryParams = pc.query_params ?? current?.queryParams;
+        if (queryParams !== undefined) preCallAPI.queryParams = queryParams;
+        body.preCallAPI = preCallAPI;
+      }
+
       if (Object.keys(body).length === 0) {
         return {
           content: [{ type: "text" as const, text: "No fields provided to update." }],
         };
       }
 
-      const isVersioned = !!agent.activeVersionId;
-
-      // --- Non-versioned agent: direct update ---
-      if (!isVersioned) {
-        const result = await atomsApi("PATCH", `/agent/${encodeURIComponent(params.agent_id)}`, body);
-
-        if (!result.ok) {
-          return { content: [{ type: "text" as const, text: formatApiError(result) }] };
-        }
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Agent ${params.agent_id} config updated successfully. Fields updated: ${Object.keys(body).join(", ")}`,
-            },
-          ],
-        };
-      }
-
-      // --- Versioned agent: create draft → update draft config ---
-
-      // Separate metadata fields (can still be updated directly on the agent).
-      // Must mirror the backend's metadataOnlyFields: telephonyProductId in
-      // particular ONLY works here — the direct PATCH writes the number→agent
-      // binding into the products registry. Sent via the draft path it is
-      // silently inert: the draft accepts the key but nothing ever assigns the
-      // number, so it looks like it worked and inbound routing never changes.
+      // Metadata fields are still written directly on the agent, not via the
+      // branch draft. telephonyProductId in particular ONLY works here — the
+      // direct PATCH writes the number→agent binding into the products registry.
+      // Sent via the draft path it is silently inert.
       const metadataFields: Record<string, unknown> = {};
       const configFields: Record<string, unknown> = {};
       const METADATA_KEYS = ["name", "description", "allowInboundCall", "telephonyProductId"];
@@ -347,44 +400,35 @@ export function registerUpdateAgentConfig(server: McpServer) {
         }
       }
 
-      // Update config via draft if any config fields
+      // Update config via the chosen branch's draft if any config fields
       if (Object.keys(configFields).length > 0) {
-        // Step 1: Create draft from active version
-        const createDraftResult = await atomsApi(
-          "POST",
-          `/agent/${encodeURIComponent(params.agent_id)}/drafts`,
-          { sourceVersionId: agent.activeVersionId }
-        );
-
-        if (!createDraftResult.ok) {
+        const branch = await resolveBranch(params.agent_id, params.branch_id);
+        if (!branch.ok) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: messages.length > 0
-                  ? `${messages.join(". ")}. However, failed to create draft for config changes: ${formatApiError(createDraftResult)}`
-                  : `Failed to create draft: ${formatApiError(createDraftResult)}`,
+                text: messages.length > 0 ? `${messages.join(". ")}. However, ${branch.message}` : branch.message,
               },
             ],
           };
         }
 
-        const draft = createDraftResult.data?.data ?? createDraftResult.data;
-        const draftId = draft?.draftId;
-
-        // Step 2: Update draft config
-        const updateDraftResult = await atomsApi(
-          "PATCH",
-          `/agent/${encodeURIComponent(params.agent_id)}/drafts/${encodeURIComponent(draftId)}/config`,
-          configFields
-        );
-
-        if (!updateDraftResult.ok) {
-          messages.push(`Draft ${draftId} created but failed to update config: ${formatApiError(updateDraftResult)}`);
-        } else {
-          messages.push(`Config changes saved to draft. Fields: ${Object.keys(configFields).join(", ")}`);
+        const saved = await saveConfigToBranch(params.agent_id, branch.value.branchId, configFields);
+        if (!saved.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: messages.length > 0
+                  ? `${messages.join(". ")}. However, ${saved.message}`
+                  : saved.message,
+              },
+            ],
+          };
         }
 
+        messages.push(`Config changes saved to draft. Fields: ${Object.keys(configFields).join(", ")}`);
         return {
           content: [
             {
@@ -392,11 +436,9 @@ export function registerUpdateAgentConfig(server: McpServer) {
               text: JSON.stringify(
                 {
                   message: messages.join(". "),
-                  versioned: true,
                   agentId: params.agent_id,
-                  draftId,
                   status: "draft",
-                  hint: "Changes are in draft state (not live yet). Use publish_draft to make them live, or make_call with version_id to test the draft first.",
+                  hint: DRAFT_HINT,
                 },
                 null,
                 2

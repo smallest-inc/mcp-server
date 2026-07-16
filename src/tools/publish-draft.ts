@@ -2,90 +2,70 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** How long to wait for the async security check before giving up (~60s). */
-const SECURITY_CHECK_POLL_INTERVAL_MS = 4000;
-const SECURITY_CHECK_MAX_POLLS = 15;
+import { publishBranch, resolveBranch } from "../versioning.js";
 
 export function registerPublishDraft(server: McpServer) {
   server.registerTool(
     "publish_draft",
     {
       description:
-        "Publish a draft as a new version and (by default) activate it to make it live. " +
-        "Publishing triggers an async security check on the prompt; this tool waits for it to pass before activating and reports the real outcome — " +
-        "if the check is still pending after ~60s the version is published but NOT live yet (use activate_version once it passes), and if it fails the version cannot be activated until the prompt is fixed. " +
-        "Can also discard a draft instead of publishing.",
+        "Publish a branch's pending draft edits, committing them as a new revision. If the branch is live, the changes serve immediately; otherwise use make_branch_live to serve them. " +
+        "Publishing runs an async security check on the prompt; this tool waits for it and reports the real outcome — " +
+        "if the check is still running after ~60s the changes aren't committed yet (they commit automatically once it passes), and if it fails the draft stays open so you can fix the prompt and publish again. " +
+        "Can also discard the pending draft instead of publishing.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID"),
-        draft_id: z.string().describe("The draft ID to publish (returned by update_agent_config, update_agent_prompt, add_agent_tool, set_pre_call_api, etc.)"),
+        branch_id: z
+          .string()
+          .optional()
+          .describe("Branch to publish (from list_branches). Omit to use the live branch; if the agent has multiple branches you'll be asked to pick one."),
         action: z
           .enum(["publish", "discard"])
           .default("publish")
-          .describe("Whether to publish the draft (make it live) or discard it"),
-        activate: z
-          .boolean()
-          .default(true)
-          .describe(
-            "Activate the published version once its security check passes (default true). Pass false to publish only — activate later with activate_version."
-          ),
+          .describe("Whether to publish the draft (commit it) or discard it"),
         label: z
           .string()
           .optional()
-          .describe("Version label (max 200 chars, e.g. 'Changed voice to yuvika')"),
-        description: z
-          .string()
-          .optional()
-          .describe("Changelog description (max 2000 chars)"),
+          .describe("Revision label (max 200 chars, e.g. 'Changed voice to yuvika')"),
       },
     },
     async (params) => {
-      const agentPath = `/agent/${encodeURIComponent(params.agent_id)}`;
-      const draftPath = `${agentPath}/drafts/${encodeURIComponent(params.draft_id)}`;
+      const branch = await resolveBranch(params.agent_id, params.branch_id);
+      if (!branch.ok) {
+        return { content: [{ type: "text" as const, text: branch.message }] };
+      }
 
       if (params.action === "discard") {
-        const result = await atomsApi("DELETE", draftPath);
-
+        const result = await atomsApi(
+          "DELETE",
+          `/agent/${encodeURIComponent(params.agent_id)}/branches/${encodeURIComponent(branch.value.branchId)}/draft`
+        );
         if (!result.ok) {
+          if (result.status === 404) {
+            return {
+              content: [
+                { type: "text" as const, text: "No pending draft to discard on this branch." },
+              ],
+            };
+          }
           return { content: [{ type: "text" as const, text: formatApiError(result) }] };
         }
 
         return {
           content: [
-            {
-              type: "text" as const,
-              text: `Draft ${params.draft_id} discarded. No changes were applied to the live agent.`,
-            },
+            { type: "text" as const, text: "Draft discarded. No changes were committed." },
           ],
         };
       }
 
-      // ── Step 1: publish (the backend always publishes INACTIVE and kicks off
-      // an async security check on the prompt; activation is a separate step). ──
-      const publishBody: Record<string, unknown> = {};
-      if (params.label !== undefined) publishBody.label = params.label;
-      if (params.description !== undefined) publishBody.description = params.description;
-
-      const result = await atomsApi("POST", `${draftPath}/publish`, publishBody);
-
-      if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      const published = await publishBranch(params.agent_id, branch.value, { label: params.label });
+      if (!published.ok) {
+        return { content: [{ type: "text" as const, text: published.message }] };
       }
 
-      const version = result.data?.data ?? result.data;
-      const versionId: string | undefined = version?._id;
-      const versionNumber: number | undefined = version?.versionNumber;
+      const { state, isLive, revisionId, revisionNumber, reason } = published.value;
 
-      const published = {
-        agentId: params.agent_id,
-        versionId,
-        versionNumber,
-        label: params.label ?? null,
-      };
-
-      if (!params.activate) {
+      if (state === "failed") {
         return {
           content: [
             {
@@ -93,73 +73,12 @@ export function registerPublishDraft(server: McpServer) {
               text: JSON.stringify(
                 {
                   message:
-                    "Draft published as a new version (NOT active). Activate it with activate_version once its security check passes.",
-                  ...published,
-                  active: false,
-                  securityCheck: version?.securityCheck?.status ?? null,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (!versionId) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  message:
-                    "Draft published, but the API returned no version id — cannot activate automatically. Use list_versions + activate_version to make it live.",
-                  ...published,
-                  active: false,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      const versionPath = `${agentPath}/versions/${encodeURIComponent(versionId)}`;
-
-      // ── Step 2: wait for the async security check (workflow_graph agents have
-      // securityCheck = null and can be activated immediately). ──
-      let checkStatus: string | null = version?.securityCheck?.status ?? null;
-      let checkReason: string | null = version?.securityCheck?.reason ?? null;
-
-      let polls = 0;
-      while (checkStatus === "pending" && polls < SECURITY_CHECK_MAX_POLLS) {
-        await sleep(SECURITY_CHECK_POLL_INTERVAL_MS);
-        polls += 1;
-
-        const detail = await atomsApi("GET", versionPath);
-        if (!detail.ok) break; // fall through to an activation attempt; it will surface the real error
-
-        const detailData = detail.data?.data ?? detail.data;
-        const v = detailData?.version ?? detailData;
-        checkStatus = v?.securityCheck?.status ?? null;
-        checkReason = v?.securityCheck?.reason ?? null;
-      }
-
-      if (checkStatus === "failed") {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  message:
-                    "Draft published, but the prompt FAILED the security check — the version cannot be activated. Fix the prompt and republish.",
-                  ...published,
-                  active: false,
+                    "Publish blocked: the prompt FAILED the security check, so nothing was committed. The draft is kept — fix the prompt and publish again.",
+                  agentId: params.agent_id,
+                  branchId: branch.value.branchId,
+                  committed: false,
                   securityCheck: "failed",
-                  reason: checkReason,
+                  reason: reason ?? null,
                 },
                 null,
                 2
@@ -169,40 +88,19 @@ export function registerPublishDraft(server: McpServer) {
         };
       }
 
-      if (checkStatus === "pending") {
+      if (state === "scanning") {
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify(
                 {
-                  message: `Draft published as version ${versionNumber}, but its security check is still pending after ${Math.round((SECURITY_CHECK_POLL_INTERVAL_MS * SECURITY_CHECK_MAX_POLLS) / 1000)}s — the version is NOT live yet. Re-run activate_version(version_id) in a moment to make it live.`,
-                  ...published,
-                  active: false,
-                  securityCheck: "pending",
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      // ── Step 3: activate (security check passed, or not applicable). ──
-      const activateResult = await atomsApi("PATCH", `${versionPath}/activate`);
-
-      if (!activateResult.ok) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  message: `Draft published as version ${versionNumber}, but activation failed — the version is NOT live. ${formatApiError(activateResult)}`,
-                  ...published,
-                  active: false,
-                  securityCheck: checkStatus,
+                  message:
+                    "Published; its security check is still running after ~60s so it isn't committed yet. It commits automatically once the check passes — re-check with list_revisions in a moment.",
+                  agentId: params.agent_id,
+                  branchId: branch.value.branchId,
+                  committed: false,
+                  securityCheck: "scanning",
                 },
                 null,
                 2
@@ -218,11 +116,15 @@ export function registerPublishDraft(server: McpServer) {
             type: "text" as const,
             text: JSON.stringify(
               {
-                message: "Draft published and activated. Changes are now live.",
-                ...published,
-                active: true,
-                securityCheck: checkStatus ?? "not_applicable",
-                ...(polls > 0 && { securityCheckWaitSecs: (polls * SECURITY_CHECK_POLL_INTERVAL_MS) / 1000 }),
+                message: isLive
+                  ? "Published and live. Changes are now serving."
+                  : "Published to the branch. Use make_branch_live to serve this branch.",
+                agentId: params.agent_id,
+                branchId: branch.value.branchId,
+                live: isLive,
+                revisionId: revisionId ?? null,
+                revisionNumber: revisionNumber ?? null,
+                label: params.label ?? null,
               },
               null,
               2

@@ -1,28 +1,45 @@
 import { atomsApi, formatApiError } from "../api.js";
+import { resolveBranch, saveConfigToBranch } from "../versioning.js";
 import type { IAgentDTO } from "../types.js";
 
 /**
- * Shared helpers for managing an agent's single_prompt tools (functions),
- * e.g. API-call tools. Mirrors how update_agent_prompt reads/writes the
- * workflow so tools and prompt are kept consistent.
+ * Shared helpers for managing a single_prompt agent's config and tools.
+ *
+ * All edits go to a branch's draft (v2 branch model): each edit auto-opens the
+ * branch's single draft and stacks onto it. Callers publish_draft once to commit.
  */
 
 export type FetchToolsResult =
-  | { ok: true; agent: IAgentDTO; prompt: string | null; tools: any[] }
+  | { ok: true; agent: IAgentDTO; branchId: string; tools: any[] }
   | { ok: false; message: string };
 
 /**
- * Fetch the agent plus its current single_prompt prompt and tools array.
- * Blocks conversation-flow (workflow_graph) agents.
+ * Fetch the agent plus the CURRENT tools array for the chosen branch — resolved
+ * from the branch's open draft when one exists (so stacked edits compose without
+ * clobbering), else the branch head. Blocks conversation-flow (workflow_graph)
+ * agents. `branchId` omitted → the live branch (or ask, if multiple exist).
  */
-export async function fetchAgentAndTools(agentId: string): Promise<FetchToolsResult> {
-  const agentResult = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}`);
+export async function fetchAgentAndTools(agentId: string, branchId?: string): Promise<FetchToolsResult> {
+  const branch = await resolveBranch(agentId, branchId);
+  if (!branch.ok) return { ok: false, message: branch.message };
+
+  // Resolve the tools of the TARGET branch: its open draft when one exists (so
+  // stacked edits compose), else its head revision — never the live config,
+  // which would seed a non-live branch's draft from the wrong tools.
+  const q = branch.value.openDraftId
+    ? `?draftId=${encodeURIComponent(branch.value.openDraftId)}`
+    : branch.value.headRevisionId
+      ? `?versionId=${encodeURIComponent(branch.value.headRevisionId)}`
+      : "";
+  const agentResult = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}${q}`);
   if (!agentResult.ok) {
     if (agentResult.status === 404) return { ok: false, message: `Agent not found: ${agentId}` };
     return { ok: false, message: formatApiError(agentResult) };
   }
 
-  const agent = (agentResult.data?.data ?? agentResult.data) as IAgentDTO;
+  const agent = (agentResult.data?.data ?? agentResult.data) as IAgentDTO & {
+    _resolvedConfig?: { tools?: any[] };
+  };
 
   if (agent.workflowType === "workflow_graph") {
     return {
@@ -32,162 +49,38 @@ export async function fetchAgentAndTools(agentId: string): Promise<FetchToolsRes
     };
   }
 
-  const workflowResult = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}/workflow`);
-  if (!workflowResult.ok) {
-    return { ok: false, message: `Failed to fetch workflow: ${formatApiError(workflowResult)}` };
-  }
-
-  const workflow = workflowResult.data?.data ?? workflowResult.data;
-  // The prompt/tools can be returned in a few shapes (see get_agent_prompt).
-  const src = workflow?.data?.singlePromptConfig ?? workflow?.singlePromptConfig ?? workflow;
-  const tools = (src?.tools ?? []) as any[];
-  const prompt = (src?.prompt ?? null) as string | null;
-
-  return { ok: true, agent, prompt, tools };
-}
-
-export type PersistToolsResult =
-  | { ok: true; versioned: boolean; draftId?: string }
-  | { ok: false; message: string };
-
-/**
- * Resolve the draft to write into: reuse the caller-supplied draft (edits stack
- * as new revisions of that draft) or create a fresh one from the active version.
- */
-async function resolveTargetDraft(
-  agentId: string,
-  activeVersionId: string,
-  existingDraftId?: string
-): Promise<{ ok: true; draftId: string } | { ok: false; message: string }> {
-  if (existingDraftId) {
-    return { ok: true, draftId: existingDraftId };
-  }
-
-  const createDraftResult = await atomsApi("POST", `/agent/${encodeURIComponent(agentId)}/drafts`, {
-    sourceVersionId: activeVersionId,
-  });
-  if (!createDraftResult.ok) {
-    return { ok: false, message: `Failed to create draft: ${formatApiError(createDraftResult)}` };
-  }
-
-  const draft = createDraftResult.data?.data ?? createDraftResult.data;
-  const draftId = draft?.draftId as string | undefined;
-  if (!draftId) {
-    return { ok: false, message: "Draft created but no draftId returned by the API." };
-  }
-  return { ok: true, draftId };
-}
-
-/**
- * Persist the full tools array on an agent.
- *
- * - Versioned agent (has activeVersionId): writes the tools to a draft's
- *   workflow_tools section — an existing draft when `draftId` is given
- *   (stacking a new revision onto it), else a fresh draft from the active
- *   version. The prompt lives in a separate section and is left untouched.
- *   Caller must publish_draft to go live.
- * - Non-versioned agent: replaces the workflow's tools directly (the prompt is
- *   re-sent unchanged because the workflow update requires a non-empty prompt).
- *
- * The tools array is always sent in full — the backend replaces the array
- * wholesale (deepMerge does not merge arrays), so the caller is responsible
- * for upserting/removing within the array before calling this.
- */
-export async function persistAgentTools(
-  agent: IAgentDTO,
-  prompt: string | null,
-  tools: any[],
-  draftId?: string
-): Promise<PersistToolsResult> {
-  const agentId = agent._id;
-
-  if (agent.activeVersionId) {
-    const target = await resolveTargetDraft(agentId, agent.activeVersionId, draftId);
-    if (!target.ok) return target;
-
-    const updateDraftResult = await atomsApi(
-      "PATCH",
-      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(target.draftId)}/config`,
-      { singlePromptConfig: { tools } }
-    );
-    if (!updateDraftResult.ok) {
-      return {
-        ok: false,
-        message: `Failed to save tools to draft ${target.draftId}: ${formatApiError(updateDraftResult)}`,
-      };
-    }
-
-    return { ok: true, versioned: true, draftId: target.draftId };
-  }
-
-  // Non-versioned: full workflow replace. The workflow schema requires a
-  // non-empty prompt, so we must have one to preserve.
-  if (!agent.workflowId) {
-    return { ok: false, message: `Agent ${agentId} has no workflow associated. Cannot update tools.` };
-  }
-  if (!prompt || prompt.trim().length === 0) {
+  // Guard against a silent wipe: a missing _resolvedConfig means we couldn't read
+  // the current tools, so a wholesale write would blank them. (An empty tools
+  // array on a present _resolvedConfig is a legitimate no-tools state.)
+  if (!agent._resolvedConfig) {
     return {
       ok: false,
-      message:
-        "This agent has no system prompt yet. Set one with update_agent_prompt before adding tools (the workflow requires a non-empty prompt).",
+      message: "Could not resolve the agent's current tools to edit them safely. Aborting to avoid overwriting the tools list.",
     };
   }
 
-  const result = await atomsApi("PATCH", `/workflow/${encodeURIComponent(agent.workflowId)}`, {
-    type: "single_prompt",
-    singlePromptConfig: { prompt, tools },
-  });
-  if (!result.ok) {
-    return { ok: false, message: formatApiError(result) };
-  }
+  const tools = (agent._resolvedConfig.tools ?? []) as any[];
 
-  return { ok: true, versioned: false };
+  return { ok: true, agent, branchId: branch.value.branchId, tools };
 }
+
+export type PersistResult = { ok: true } | { ok: false; message: string };
 
 /**
- * Persist a flat agent-config payload (e.g. `{ preCallAPI: {...} }`).
- *
- * - Versioned agent: writes the payload to a draft's config via
- *   PATCH /agent/:id/drafts/:draftId/config — an existing draft when `draftId`
- *   is given (stacking a new revision onto it), else a fresh draft from the
- *   active version. Caller must publish_draft.
- * - Non-versioned agent: PATCH /agent/:id directly.
- *
- * This mirrors how update_agent_config routes config-field changes.
+ * Persist the full tools array to a branch's draft. The array is always sent in
+ * full — the backend replaces it wholesale — so callers upsert/remove within the
+ * array (against the draft-resolved read from fetchAgentAndTools) first.
  */
-export async function persistAgentConfig(
+export async function persistAgentTools(
   agent: IAgentDTO,
-  payload: Record<string, unknown>,
-  draftId?: string
-): Promise<PersistToolsResult> {
-  const agentId = agent._id;
-
-  if (agent.activeVersionId) {
-    const target = await resolveTargetDraft(agentId, agent.activeVersionId, draftId);
-    if (!target.ok) return target;
-
-    const updateDraftResult = await atomsApi(
-      "PATCH",
-      `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(target.draftId)}/config`,
-      payload
-    );
-    if (!updateDraftResult.ok) {
-      return {
-        ok: false,
-        message: `Failed to save config to draft ${target.draftId}: ${formatApiError(updateDraftResult)}`,
-      };
-    }
-
-    return { ok: true, versioned: true, draftId: target.draftId };
-  }
-
-  const result = await atomsApi("PATCH", `/agent/${encodeURIComponent(agentId)}`, payload);
-  if (!result.ok) {
-    return { ok: false, message: formatApiError(result) };
-  }
-  return { ok: true, versioned: false };
+  branchId: string,
+  tools: any[]
+): Promise<PersistResult> {
+  const saved = await saveConfigToBranch(agent._id, branchId, { singlePromptConfig: { tools } });
+  if (!saved.ok) return { ok: false, message: `Failed to save tools: ${saved.message}` };
+  return { ok: true };
 }
 
-/** Standard hint appended when changes land in a draft (versioned agents). */
-export const VERSIONED_DRAFT_HINT =
-  "Changes are in draft state (not live yet). Pass this draftId as draft_id to other edit tools to stack more changes into the same draft, then publish_draft once to make everything live (or make_call with the draft's version_id to test first).";
+/** Standard hint appended when changes land in a branch draft. */
+export const DRAFT_HINT =
+  "Changes are saved to the branch's draft (not live yet). Stack more edits with other tools, then run publish_draft once to make everything live (or test first with test_agent).";

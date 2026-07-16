@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { fetchAgentAndTools, persistAgentTools, VERSIONED_DRAFT_HINT } from "./agent-tools-helper.js";
+import { fetchAgentAndTools, persistAgentTools, DRAFT_HINT } from "./agent-tools-helper.js";
 
 /** Schema for one API-call tool — used both for the single-tool params and the batch `tools` array.
  *  Exported for reuse by the Playbooks tools (playbook tools use the same function shape). */
@@ -115,20 +115,15 @@ export function registerAddAgentTool(server: McpServer) {
     "add_agent_tool",
     {
       description:
-        "Add (or update) one or more API-call tools on a single_prompt agent. API-call tools let the agent make an HTTP request to an external API during a call — e.g. look up an order, book an appointment, or post to a CRM. " +
-        "The agent decides when to invoke a tool based on its name and description, filling in any declared parameters. " +
-        "Pass a single tool via the top-level fields, or several at once via `tools` (preferred when configuring multiple tools — they land in one draft write). " +
-        "Upserts by name: tools with existing names are replaced; others are added (existing tools are preserved). " +
-        "For versioned agents the change is saved as a draft — pass `draft_id` to stack onto an existing draft (e.g. one returned by update_agent_prompt or set_pre_call_api) instead of creating a new one, then publish_draft once. " +
-        "Caveat: the draft's tools section is written wholesale, so when targeting a draft that already had tool edits, include ALL desired tools in this call. Use get_agent_prompt to see an agent's current live tools.",
+        "Add (or update) one or more API-call tools on a single_prompt agent. API-call tools let the agent make an HTTP request to an external API during a call — e.g. look up an order, book an appointment, or post to a CRM. The agent decides when to invoke a tool from its name + description, filling in any declared parameters. " +
+        "Pass a single tool via the top-level fields, or several at once via `tools`. Upserts by name: an existing tool with the same name is replaced, others are preserved. " +
+        "Changes are saved to the branch's draft via read-modify-write against the open draft — make tool edits one at a time (sequential edits stack; concurrent edits to the same branch can drop each other), then publish_draft once to make everything live. Use remove_agent_tool to delete a tool by name, and configure_call_actions for end_call / transfer_call.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to add the tool(s) to"),
-        draft_id: z
+        branch_id: z
           .string()
           .optional()
-          .describe(
-            "Existing draft to write into (stacks this change onto the draft's other edits). Omit to create a new draft from the live version."
-          ),
+          .describe("Branch whose draft to edit (from list_branches). Omit to use the live branch; if the agent has multiple branches you'll be asked to pick one."),
         tools: z
           .array(apiToolSchema)
           .optional()
@@ -149,7 +144,7 @@ export function registerAddAgentTool(server: McpServer) {
       },
     },
     async (params) => {
-      // Collect the tool inputs: batch `tools` array, or the single top-level tool.
+      // Collect the batch `tools` array or the single top-level tool.
       let inputs: ApiToolInput[];
       if (params.tools && params.tools.length > 0) {
         inputs = params.tools;
@@ -181,14 +176,11 @@ export function registerAddAgentTool(server: McpServer) {
         ];
       }
 
-      // Reject duplicate names within the batch.
       const seen = new Set<string>();
       for (const t of inputs) {
         if (seen.has(t.name)) {
           return {
-            content: [
-              { type: "text" as const, text: `Duplicate tool name '${t.name}' in the tools array.` },
-            ],
+            content: [{ type: "text" as const, text: `Duplicate tool name '${t.name}' in the tools array.` }],
           };
         }
         seen.add(t.name);
@@ -206,18 +198,19 @@ export function registerAddAgentTool(server: McpServer) {
         };
       }
 
-      const fetched = await fetchAgentAndTools(params.agent_id);
+      const fetched = await fetchAgentAndTools(params.agent_id, params.branch_id);
       if (!fetched.ok) {
         return { content: [{ type: "text" as const, text: fetched.message }] };
       }
 
       // Upsert by name (case-sensitive): keep tools not being replaced, append the new ones.
+      const newTools = inputs.map(buildApiCallTool);
       const newNames = new Set(inputs.map((t) => t.name));
       const kept = fetched.tools.filter((t) => !newNames.has(t?.name));
       const replacedCount = fetched.tools.length - kept.length;
-      const tools = [...kept, ...inputs.map(buildApiCallTool)];
+      const tools = [...kept, ...newTools];
 
-      const persisted = await persistAgentTools(fetched.agent, fetched.prompt, tools, params.draft_id);
+      const persisted = await persistAgentTools(fetched.agent, fetched.branchId, tools);
       if (!persisted.ok) {
         return { content: [{ type: "text" as const, text: persisted.message }] };
       }
@@ -230,13 +223,9 @@ export function registerAddAgentTool(server: McpServer) {
         agentId: params.agent_id,
         tools: inputs.map((t) => ({ name: t.name, method: t.method, url: t.url })),
         totalTools: tools.length,
+        status: "draft",
+        hint: DRAFT_HINT,
       };
-      if (persisted.versioned) {
-        result.versioned = true;
-        result.draftId = persisted.draftId;
-        result.status = "draft";
-        result.hint = VERSIONED_DRAFT_HINT;
-      }
 
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     }

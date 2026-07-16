@@ -26,8 +26,8 @@ export function registerChatWithAgent(server: McpServer) {
         "cut off. Returns the full transcript. " +
         "Use this to test an agent's prompt/behaviour programmatically (e.g. an automated build → test → " +
         "evaluate → refine loop): run a scripted conversation, read the transcript, then adjust the prompt " +
-        "with update_agent_prompt and run again. This places a real (chargeable) chat session on the agent. " +
-        "Note: the agent must be published; for unpublished drafts use test_draft (mode=chat) to start one.",
+        "with update_agent and run again. This places a real (chargeable) chat session on the agent. " +
+        "Note: the agent must be published; to chat with unpublished draft changes use test_agent (mode=chat, include_draft=true).",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to chat with (must be a published agent)"),
         messages: z

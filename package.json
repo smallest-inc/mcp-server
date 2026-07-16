@@ -24,7 +24,8 @@
   "scripts": {
     "build": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
     "dev": "tsx src/index.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "smoke": "npm run build && node smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

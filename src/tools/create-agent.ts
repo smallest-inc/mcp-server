@@ -9,7 +9,7 @@ export function registerCreateAgent(server: McpServer) {
     "create_agent",
     {
       description:
-        "Create a new AI agent in your organization. By default the agent is a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1); set workflow_type to multi_agents for a Playbooks agent (an intent router + specialist SOP playbooks — add them via add_playbooks after creation). The STT transcriber defaults to Pulse — change it (e.g. to pulse-legacy) via update_agent_config after creation. Returns the created agent's ID. For single_prompt agents, set the prompt via update_agent_prompt after creation.",
+        "Create a new AI agent in your organization. By default the agent is a single_prompt agent with gpt-4.1 model and daniel voice (waves_lightning_v3_1); set workflow_type to multi_agents for a Playbooks agent (an intent router + specialist SOP playbooks — add them via add_playbooks after creation). The STT transcriber defaults to Pulse — change it (e.g. to pulse-legacy) via update_agent after creation. Returns the created agent's ID. For single_prompt agents, set the prompt via update_agent after creation.",
       inputSchema: {
         name: z.string().optional().describe("Name for the new agent"),
         description: z.string().optional().describe("Short description of what the agent does"),
@@ -74,7 +74,7 @@ export function registerCreateAgent(server: McpServer) {
         global_prompt: z
           .string()
           .optional()
-          .describe("Global system prompt for the agent (max 4000 chars). For the main prompt, use update_agent_prompt after creation."),
+          .describe("Global system prompt for the agent (max 4000 chars). For the main prompt, use update_agent after creation."),
         first_message: z
           .string()
           .optional()
@@ -192,7 +192,7 @@ export function registerCreateAgent(server: McpServer) {
         });
         if (!firstMsgResult.ok) {
           warnings.push(
-            `Agent created but failed to set first message: ${formatApiError(firstMsgResult)}. Use update_agent_config to set it manually.`
+            `Agent created but failed to set first message: ${formatApiError(firstMsgResult)}. Use update_agent to set it manually.`
           );
         }
       }
