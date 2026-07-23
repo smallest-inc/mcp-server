@@ -70,23 +70,38 @@ Reload your editor, then type: **"List all my agents"**
 | `get_phone_numbers` | List phone numbers owned by your organization |
 | `get_voices` | List available voices with gender, language, and model filters |
 | `get_playbooks` | Read a multi-agent (Playbooks) agent's SOPs, intent router, and shared auth tools |
+| `get_branch_draft` | View a branch's pending (unpublished) draft changes |
+| `get_revision` | Get a single committed revision's metadata and resolved config |
 
 ### Write
+
+Edits are saved to a branch's **draft** (agents use the branch/revision model). Pass an optional `branch_id` to any editing tool — omit it to edit the live branch; if the agent has several branches you'll be asked which one. Run `publish_draft` once to commit.
 
 | Tool | Description |
 |---|---|
 | `create_agent` | Create a new AI voice agent (`single_prompt`, or `multi_agents` for Playbooks) |
-| `update_agent_prompt` | Update an agent's system prompt / instructions |
+| `update_agent` | Update agent settings — name, prompt, first message, voice, model, language, variables, pre-call API, etc. |
+| `add_agent_tool` | Add or update an API-call tool the agent can invoke during a call |
+| `remove_agent_tool` | Remove a tool from an agent by name |
+| `configure_call_actions` | Enable/disable end_call and set a transfer number — agent-level |
 | `add_playbooks` | Add SOP playbooks (intent + prompt + scoped API tools + auth level) to a multi-agent |
 | `update_playbook` | Edit, archive, or restore one playbook |
 | `configure_playbooks` | Set the intent router, conversation guide, and shared weak/strong auth tools |
-| `configure_call_actions` | Enable/disable end_call and set a transfer number — agent-level, applies across all playbooks |
-| `update_agent_config` | Update agent settings — name, language, voice, STT, first message, etc. |
-| `add_agent_tool` | Add or update an API-call tool the agent can invoke during a call |
-| `remove_agent_tool` | Remove a tool from an agent by name |
-| `set_pre_call_api` | Configure (or disable) the pre-call API that runs before a call to enrich variables |
 | `delete_agent` | Archive (soft-delete) or unarchive an agent |
-| `publish_draft` | Publish or discard a draft on a versioned agent |
+| `duplicate_agent` | Copy an agent |
+
+### Versioning (branches & revisions)
+
+| Tool | Description |
+|---|---|
+| `list_branches` | List the agent's branches (which is live, which have a pending draft) |
+| `create_branch` | Create a working branch from another branch's head |
+| `rename_branch` | Rename a branch |
+| `make_branch_live` | Make a branch's head the live (serving) config |
+| `publish_draft` | Publish (commit) or discard a branch's pending draft |
+| `list_revisions` | List a branch's committed revisions |
+| `diff` | Compare two configs (revisions or a branch draft) |
+| `test_agent` | Start a test call against a branch's head, its draft, or a specific revision |
 
 ### Act
 

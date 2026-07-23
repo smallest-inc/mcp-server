@@ -10,5 +10,4 @@ export { registerGetCampaigns } from "./get-campaigns.js";
 export { registerGetPhoneNumbers } from "./get-phone-numbers.js";
 export { registerGetUsageStats } from "./get-usage-stats.js";
 export { registerMakeCall } from "./make-call.js";
-export { registerUpdateAgentConfig } from "./update-agent-config.js";
-export { registerUpdateAgentPrompt } from "./update-agent-prompt.js";
+export { registerUpdateAgent } from "./update-agent.js";

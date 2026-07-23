@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { resolveBranch, saveConfigToBranch } from "../versioning.js";
 import { apiToolSchema, buildApiCallTool, type ApiToolInput } from "./add-agent-tool.js";
 
 /**
@@ -119,20 +120,24 @@ function buildPlaybook(p: PlaybookInput, taken: Set<string>): Playbook {
 }
 
 type SectionResult =
-  | { ok: true; section: PlaybooksSection; agent: any }
+  | { ok: true; section: PlaybooksSection; agent: any; branchId: string }
   | { ok: false; message: string };
 
-/** Fetch the playbooks section from the agent's resolved config (active / draft / version). */
-async function fetchPlaybooksSection(
-  agentId: string,
-  opts: { draftId?: string; versionId?: string } = {}
-): Promise<SectionResult> {
-  const qs = opts.draftId
-    ? `?draftId=${encodeURIComponent(opts.draftId)}`
-    : opts.versionId
-      ? `?versionId=${encodeURIComponent(opts.versionId)}`
+/**
+ * Fetch the playbooks section for a branch — resolved from its open draft when one
+ * exists (so stacked edits compose), else its head. Returns the branch id to write
+ * back to. `branchId` omitted → the live branch (or ask, if multiple exist).
+ */
+async function fetchPlaybooksSection(agentId: string, branchId?: string): Promise<SectionResult> {
+  const branch = await resolveBranch(agentId, branchId);
+  if (!branch.ok) return { ok: false, message: branch.message };
+
+  const q = branch.value.openDraftId
+    ? `?draftId=${encodeURIComponent(branch.value.openDraftId)}`
+    : branch.value.headRevisionId
+      ? `?versionId=${encodeURIComponent(branch.value.headRevisionId)}`
       : "";
-  const result = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}${qs}`);
+  const result = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}${q}`);
   if (!result.ok) {
     if (result.status === 404) return { ok: false, message: `Agent not found: ${agentId}` };
     return { ok: false, message: formatApiError(result) };
@@ -144,7 +149,17 @@ async function fetchPlaybooksSection(
       message: `Agent ${agentId} is a ${agent?.workflowType ?? "unknown"} agent — playbooks only apply to multi_agents agents. Create one with create_agent { workflow_type: "multi_agents" }.`,
     };
   }
-  const raw = agent?._resolvedConfig?.playbooks;
+  // Guard against a silent wipe: a missing _resolvedConfig means we couldn't read
+  // the current playbooks, so a wholesale write would blank them. (A present
+  // _resolvedConfig with no playbooks section is a legitimate empty state — a fresh
+  // multi_agents agent — so we only abort when _resolvedConfig itself is absent.)
+  if (!agent._resolvedConfig) {
+    return {
+      ok: false,
+      message: "Could not resolve the agent's current playbooks to edit them safely. Aborting to avoid overwriting the playbooks list.",
+    };
+  }
+  const raw = agent._resolvedConfig.playbooks;
   const section: PlaybooksSection = {
     ...EMPTY_SECTION,
     ...(raw ?? {}),
@@ -152,29 +167,12 @@ async function fetchPlaybooksSection(
     auth: { weakTools: [], strongTools: [], ...(raw?.auth ?? {}) },
     playbooks: raw?.playbooks ?? [],
   };
-  return { ok: true, section, agent };
+  return { ok: true, section, agent, branchId: branch.value.branchId };
 }
 
-type DraftResult = { ok: true; draftId: string; created: boolean } | { ok: false; message: string };
-
-/** Use the given draft, or create a fresh one from the agent's active version. */
-async function resolveDraft(agentId: string, draftId: string | undefined, agent: any): Promise<DraftResult> {
-  if (draftId) return { ok: true, draftId, created: false };
-  const create = await atomsApi("POST", `/agent/${encodeURIComponent(agentId)}/drafts`, {
-    sourceVersionId: agent?.activeVersionId,
-  });
-  if (!create.ok) return { ok: false, message: `Failed to create draft: ${formatApiError(create)}` };
-  const draft = create.data?.data ?? create.data;
-  if (!draft?.draftId) return { ok: false, message: "Draft creation returned no draftId" };
-  return { ok: true, draftId: draft.draftId, created: true };
-}
-
-async function savePlaybooks(agentId: string, draftId: string, section: PlaybooksSection) {
-  return atomsApi(
-    "PATCH",
-    `/agent/${encodeURIComponent(agentId)}/drafts/${encodeURIComponent(draftId)}/config`,
-    { playbooks: section }
-  );
+/** Persist the playbooks section onto the branch's draft (auto-opens the draft). */
+async function savePlaybooks(agentId: string, branchId: string, section: PlaybooksSection) {
+  return saveConfigToBranch(agentId, branchId, { playbooks: section });
 }
 
 /** Case-insensitive duplicate check across ALL playbooks (archived included — the backend enforces the same). */
@@ -242,11 +240,11 @@ function textErr(message: string) {
   return { content: [{ type: "text" as const, text: message }] };
 }
 
-const DRAFT_PARAM = z
+const BRANCH_PARAM = z
   .string()
   .optional()
   .describe(
-    "Draft to edit. Omit to start a NEW draft from the active version (its id is returned — pass it to subsequent playbooks calls so all edits land on the same draft). Changes go live only after publish_draft."
+    "Branch whose draft to edit (from list_branches). Omit to use the live branch; if the agent has multiple branches you'll be asked to pick one. Edits stack on the branch's single draft — publish_draft to go live."
   );
 
 // ── get_playbooks ────────────────────────────────────────────────────────────
@@ -256,19 +254,15 @@ export function registerGetPlaybooks(server: McpServer) {
     "get_playbooks",
     {
       description:
-        "Read a multi_agents agent's Playbooks config: the intent router (fallback + mid-call rerouting), shared auth tools, and the SOP list (id, intent, auth level, tool count). Pass playbook_id for one playbook's full detail (prompt, tools, intent description). Reads the active version by default; pass draft_id or version_id to inspect those instead.",
+        "Read a multi_agents agent's Playbooks config: the intent router (fallback + mid-call rerouting), shared auth tools, and the SOP list (id, intent, auth level, tool count). Pass playbook_id for one playbook's full detail (prompt, tools, intent description). Reads the branch's open draft when it has one, else its head; pass branch_id to target a specific branch.",
       inputSchema: {
         agent_id: z.string().describe("The multi_agents agent ID"),
-        draft_id: z.string().optional().describe("Read this draft's config instead of the active version"),
-        version_id: z.string().optional().describe("Read this published version's config instead of the active version"),
+        branch_id: BRANCH_PARAM,
         playbook_id: z.string().optional().describe("Return the full config of just this playbook"),
       },
     },
     async (params) => {
-      const fetched = await fetchPlaybooksSection(params.agent_id, {
-        draftId: params.draft_id,
-        versionId: params.version_id,
-      });
+      const fetched = await fetchPlaybooksSection(params.agent_id, params.branch_id);
       if (!fetched.ok) return textErr(fetched.message);
       if (params.playbook_id) {
         const pb = fetched.section.playbooks.find((p) => p.id === params.playbook_id);
@@ -288,15 +282,15 @@ export function registerAddPlaybooks(server: McpServer) {
     "add_playbooks",
     {
       description:
-        "Add one or more playbooks (SOPs) to a multi_agents agent. Each playbook = an intent (name + description the classifier routes on) + a specialist prompt + optional scoped tools and an auth level. Edits land on a draft (auto-created from the active version when draft_id is omitted) — use publish_draft to go live. The first enabled playbook becomes the router fallback automatically if none is set. Names and intent names must be unique on the agent (case-insensitive, archived included).",
+        "Add one or more playbooks (SOPs) to a multi_agents agent. Each playbook = an intent (name + description the classifier routes on) + a specialist prompt + optional scoped tools and an auth level. Edits land on the branch's draft — use publish_draft to go live. The first enabled playbook becomes the router fallback automatically if none is set. Names and intent names must be unique on the agent (case-insensitive, archived included).",
       inputSchema: {
         agent_id: z.string().describe("The multi_agents agent ID"),
-        draft_id: DRAFT_PARAM,
+        branch_id: BRANCH_PARAM,
         playbooks: z.array(playbookInputSchema).min(1).describe("The SOPs to add (batch them — one draft write)"),
       },
     },
     async (params) => {
-      const fetched = await fetchPlaybooksSection(params.agent_id, { draftId: params.draft_id });
+      const fetched = await fetchPlaybooksSection(params.agent_id, params.branch_id);
       if (!fetched.ok) return textErr(fetched.message);
       const section = fetched.section;
 
@@ -324,21 +318,18 @@ export function registerAddPlaybooks(server: McpServer) {
         }
       }
 
-      const draft = await resolveDraft(params.agent_id, params.draft_id, fetched.agent);
-      if (!draft.ok) return textErr(draft.message);
-      const save = await savePlaybooks(params.agent_id, draft.draftId, section);
-      if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
+      const save = await savePlaybooks(params.agent_id, fetched.branchId, section);
+      if (!save.ok) return textErr(`Failed to save playbooks: ${save.message}`);
 
       const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Added ${added.length} playbook(s) to draft`,
-        draft_id: draft.draftId,
-        ...(draft.created && { draft_created: true }),
+        branch_id: fetched.branchId,
         added: added.map((p) => ({ id: p.id, name: p.name, intent: p.intentName, auth: p.authLevel, tools: (p.tools ?? []).length })),
         total_playbooks: section.playbooks.length,
         ...(fallbackNote && { fallback: fallbackNote }),
         ...(warnings.length > 0 && { warnings }),
-        hint: "Draft only — publish_draft to go live. Pass this draft_id to further playbooks calls to keep editing the same draft.",
+        hint: "Draft only — publish_draft to go live.",
       });
     }
   );
@@ -354,7 +345,7 @@ export function registerUpdatePlaybook(server: McpServer) {
         "Edit one playbook (SOP) on a multi_agents agent: change its prompt, intent, auth level, tools, or archive/restore it (enabled=false/true — playbooks are archived, never deleted, so call history stays resolvable). Edits land on a draft (auto-created when draft_id omitted); publish_draft to go live. The router fallback cannot be archived — repoint it first via configure_playbooks.",
       inputSchema: {
         agent_id: z.string().describe("The multi_agents agent ID"),
-        draft_id: DRAFT_PARAM,
+        branch_id: BRANCH_PARAM,
         playbook_id: z.string().describe("The playbook id to edit (see get_playbooks)"),
         name: z.string().min(1).optional().describe("New customer-facing label"),
         intent_name: z.string().min(1).optional().describe("New intent label (must stay unique on the agent)"),
@@ -372,7 +363,7 @@ export function registerUpdatePlaybook(server: McpServer) {
       },
     },
     async (params) => {
-      const fetched = await fetchPlaybooksSection(params.agent_id, { draftId: params.draft_id });
+      const fetched = await fetchPlaybooksSection(params.agent_id, params.branch_id);
       if (!fetched.ok) return textErr(fetched.message);
       const section = fetched.section;
 
@@ -416,16 +407,13 @@ export function registerUpdatePlaybook(server: McpServer) {
         pb.tools = params.tools.map((t) => buildApiCallTool(t as ApiToolInput));
       }
 
-      const draft = await resolveDraft(params.agent_id, params.draft_id, fetched.agent);
-      if (!draft.ok) return textErr(draft.message);
-      const save = await savePlaybooks(params.agent_id, draft.draftId, section);
-      if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
+      const save = await savePlaybooks(params.agent_id, fetched.branchId, section);
+      if (!save.ok) return textErr(`Failed to save playbooks: ${save.message}`);
 
       const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Playbook "${pb.id}" updated on draft`,
-        draft_id: draft.draftId,
-        ...(draft.created && { draft_created: true }),
+        branch_id: fetched.branchId,
         playbook: { id: pb.id, name: pb.name, intent: pb.intentName, auth: pb.authLevel, enabled: pb.enabled !== false, tools: (pb.tools ?? []).length },
         ...(warnings.length > 0 && { warnings }),
         hint: "Draft only — publish_draft to go live.",
@@ -444,7 +432,7 @@ export function registerConfigurePlaybooks(server: McpServer) {
         "Configure the section-level Playbooks settings of a multi_agents agent: the intent router (fallback playbook, mid-call rerouting), the conversation guide (persona/tone/global rules injected into EVERY playbook — define them once here, not per-SOP), and the shared identity tools that satisfy weak/strong auth. Edits land on a draft (auto-created when draft_id omitted); publish_draft to go live.",
       inputSchema: {
         agent_id: z.string().describe("The multi_agents agent ID"),
-        draft_id: DRAFT_PARAM,
+        branch_id: BRANCH_PARAM,
         fallback_playbook_id: z
           .string()
           .optional()
@@ -468,7 +456,7 @@ export function registerConfigurePlaybooks(server: McpServer) {
       },
     },
     async (params) => {
-      const fetched = await fetchPlaybooksSection(params.agent_id, { draftId: params.draft_id });
+      const fetched = await fetchPlaybooksSection(params.agent_id, params.branch_id);
       if (!fetched.ok) return textErr(fetched.message);
       const section = fetched.section;
 
@@ -500,16 +488,13 @@ export function registerConfigurePlaybooks(server: McpServer) {
       }
       if (changed.length === 0) return textErr("Nothing to change — pass at least one setting.");
 
-      const draft = await resolveDraft(params.agent_id, params.draft_id, fetched.agent);
-      if (!draft.ok) return textErr(draft.message);
-      const save = await savePlaybooks(params.agent_id, draft.draftId, section);
-      if (!save.ok) return textErr(`Failed to save playbooks: ${formatApiError(save)}`);
+      const save = await savePlaybooks(params.agent_id, fetched.branchId, section);
+      if (!save.ok) return textErr(`Failed to save playbooks: ${save.message}`);
 
       const warnings = publishWarnings(section, fetched.agent);
       return text({
         message: `Updated: ${changed.join(", ")}`,
-        draft_id: draft.draftId,
-        ...(draft.created && { draft_created: true }),
+        branch_id: fetched.branchId,
         ...(warnings.length > 0 && { warnings }),
         hint: "Draft only — publish_draft to go live.",
       });

@@ -30,7 +30,7 @@ export function registerGetVoices(server: McpServer) {
     "get_voices",
     {
       description:
-        "List available voices for agents. Returns voice IDs, names, gender, language, and supported models. Use the voiceId with update_agent_config's synthesizer.voiceConfig to change an agent's voice. A voice whose supportedModels include 'lightning-v3.1-pro' is a Lightning V3.1 Pro voice (use it with the waves_lightning_v3_1 model). Optionally include your organization's cloned voices.",
+        "List available voices for agents. Returns voice IDs, names, gender, language, and supported models. Use the voiceId with update_agent's synthesizer.voiceConfig to change an agent's voice. A voice whose supportedModels include 'lightning-v3.1-pro' is a Lightning V3.1 Pro voice (use it with the waves_lightning_v3_1 model). Optionally include your organization's cloned voices.",
       inputSchema: {
         gender: z
           .enum(["male", "female"])
