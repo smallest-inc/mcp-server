@@ -64,8 +64,11 @@ import { registerUpdateAgent } from "./update-agent.js";
 import { registerUpdateBillingAlerts } from "./update-billing-alerts.js";
 import { registerValidateCoupon } from "./validate-coupon.js";
 import {
+  registerAttachAgentWebhook,
   registerCreateWebhook,
   registerDeleteWebhook,
+  registerDetachAgentWebhooks,
+  registerGetAgentWebhooks,
   registerGetWebhookEvents,
   registerGetWebhooks,
   registerUpdateWebhook,
@@ -147,6 +150,9 @@ export function registerTools(server: McpServer) {
   registerUpdateWebhook(server);
   registerDeleteWebhook(server);
   registerGetWebhookEvents(server);
+  registerAttachAgentWebhook(server);
+  registerGetAgentWebhooks(server);
+  registerDetachAgentWebhooks(server);
 
   // Utilities
   registerGetPhoneNumbers(server);
