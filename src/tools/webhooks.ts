@@ -15,7 +15,14 @@ const eventTypeSchema = z
     "Which event to deliver: 'pre-conversation' (call start), 'post-conversation' (call end), or 'analytics-completed' (post-call analytics ready)."
   );
 
+// Event types are never safe to guess — the caller must confirm which the user wants.
+const NEVER_ASSUME_EVENTS =
+  "Never guess or default the event types. If the user hasn't said which of call-start (pre-conversation), " +
+  "call-end (post-conversation), or analytics (analytics-completed) they want, ask them before calling.";
+
 const webhookIdSchema = z.string().regex(/^[a-f\d]{24}$/, "Invalid webhook id (expected a 24-char hex ObjectId)");
+
+const agentIdSchema = z.string().regex(/^[a-f\d]{24}$/, "Invalid agent id (expected a 24-char hex ObjectId)");
 
 // Only summarise the fields callers care about; the raw doc also carries encryption metadata.
 function summariseWebhook(w: any) {
@@ -41,21 +48,25 @@ export function registerCreateWebhook(server: McpServer) {
     "create_webhook",
     {
       description:
-        "Create a webhook endpoint and attach it to agents for specific events. This is how you subscribe an agent to call-start ('pre-conversation'), call-end ('post-conversation'), and post-call-analytics ('analytics-completed') deliveries. " +
-        "Each entry in `events` attaches one event type on one agent to this endpoint — repeat the same agent_id with different event types to subscribe it to multiple events. " +
-        "Subscriptions are set only at creation time; use update_webhook only to change the URL, description, or headers (not the agent/event attachments).",
+        "Register a NEW webhook endpoint (delivery URL). Use this only when the target URL does not already exist as a webhook. " +
+        "To point an agent at an ALREADY-REGISTERED webhook, do NOT create a new one — call get_webhooks to find it, then attach_agent_webhook. " +
+        "`events` is optional: omit it to register the endpoint only, or pass agent+event pairs to attach in the same call. " +
+        NEVER_ASSUME_EVENTS,
       inputSchema: {
         endpoint: z.string().url().describe("The HTTPS URL that will receive webhook deliveries."),
         description: z.string().min(1).describe("A human-readable label for this webhook."),
         events: z
           .array(
             z.object({
-              agent_id: z.string().describe("The agent to attach this event to."),
+              agent_id: agentIdSchema.describe("The agent to attach this event to."),
               event_type: eventTypeSchema,
             })
           )
-          .min(1)
-          .describe("Agent + event-type pairs to subscribe to this endpoint."),
+          .optional()
+          .describe(
+            "Optional agent + event-type pairs to subscribe at creation. Repeat an agent_id with different event types for multiple events. " +
+              NEVER_ASSUME_EVENTS
+          ),
         headers: z
           .record(z.string(), z.string())
           .optional()
@@ -65,10 +76,11 @@ export function registerCreateWebhook(server: McpServer) {
       },
     },
     async (params) => {
+      const events = params.events ?? [];
       const body: Record<string, unknown> = {
         endpoint: params.endpoint,
         description: params.description,
-        events: params.events.map((e) => ({ agentId: e.agent_id, eventType: e.event_type })),
+        events: events.map((e) => ({ agentId: e.agent_id, eventType: e.event_type })),
       };
       if (params.headers !== undefined) body.headers = params.headers;
 
@@ -84,9 +96,12 @@ export function registerCreateWebhook(server: McpServer) {
             type: "text" as const,
             text: JSON.stringify(
               {
-                message: `Webhook created and attached to ${params.events.length} agent-event subscription${params.events.length === 1 ? "" : "s"}.`,
+                message:
+                  events.length > 0
+                    ? `Webhook created and attached to ${events.length} agent-event subscription${events.length === 1 ? "" : "s"}.`
+                    : "Webhook endpoint created (no agent attached yet). Use attach_agent_webhook to subscribe an agent.",
                 webhookId,
-                events: params.events,
+                events,
               },
               null,
               2
@@ -233,6 +248,112 @@ export function registerGetWebhookEvents(server: McpServer) {
 
       const data = result.data?.data ?? result.data;
       return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+}
+
+export function registerAttachAgentWebhook(server: McpServer) {
+  server.registerTool(
+    "attach_agent_webhook",
+    {
+      description:
+        "Attach an EXISTING webhook to an agent for the given events. This is the right tool for 'send this agent's call-start/call-end/analytics to an already-created webhook' — find the webhook with get_webhooks first, then pass its id here. " +
+        "WARNING: this REPLACES the agent's current subscriptions — the backend deletes all of the agent's existing webhook subscriptions and recreates them for this webhook only, so an agent points at one webhook at a time. To only remove subscriptions, use detach_agent_webhooks. " +
+        NEVER_ASSUME_EVENTS,
+      inputSchema: {
+        agent_id: agentIdSchema.describe("The agent to attach the webhook to."),
+        webhook_id: webhookIdSchema.describe("An existing webhook's id (from get_webhooks)."),
+        event_types: z
+          .array(eventTypeSchema)
+          .min(1)
+          .describe("The events to deliver to this webhook for this agent. " + NEVER_ASSUME_EVENTS),
+      },
+    },
+    async (params) => {
+      // De-dupe event types; the backend creates one subscription per entry.
+      const eventTypes = [...new Set(params.event_types)];
+      const result = await atomsApi(
+        "POST",
+        `/agent/${encodeURIComponent(params.agent_id)}/webhook-subscriptions`,
+        { webhookId: params.webhook_id, eventTypes }
+      );
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                message: `Agent ${params.agent_id} now subscribed to webhook ${params.webhook_id} for: ${eventTypes.join(", ")}. Any previous subscriptions for this agent were replaced.`,
+                agentId: params.agent_id,
+                webhookId: params.webhook_id,
+                eventTypes,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+}
+
+export function registerGetAgentWebhooks(server: McpServer) {
+  server.registerTool(
+    "get_agent_webhooks",
+    {
+      description:
+        "List an agent's current webhook subscriptions — which webhook it's attached to and for which events (pre-conversation, post-conversation, analytics-completed).",
+      inputSchema: {
+        agent_id: agentIdSchema.describe("The agent whose subscriptions to fetch."),
+      },
+    },
+    async (params) => {
+      const result = await atomsApi(
+        "GET",
+        `/agent/${encodeURIComponent(params.agent_id)}/webhook-subscriptions`
+      );
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      }
+
+      const data = result.data?.data ?? result.data;
+      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+}
+
+export function registerDetachAgentWebhooks(server: McpServer) {
+  server.registerTool(
+    "detach_agent_webhooks",
+    {
+      description:
+        "Remove ALL of an agent's webhook subscriptions. The agent will stop receiving call-start/call-end/analytics deliveries until re-attached with attach_agent_webhook. This does not delete the webhook endpoint itself.",
+      inputSchema: {
+        agent_id: agentIdSchema.describe("The agent whose subscriptions to remove."),
+      },
+    },
+    async (params) => {
+      const result = await atomsApi(
+        "DELETE",
+        `/agent/${encodeURIComponent(params.agent_id)}/webhook-subscriptions`
+      );
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `All webhook subscriptions removed for agent ${params.agent_id}.`,
+          },
+        ],
+      };
     }
   );
 }
