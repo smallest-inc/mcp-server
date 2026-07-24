@@ -12,6 +12,7 @@ import { registerDebugCall } from "./debug-call.js";
 import { registerDeleteAgent } from "./delete-agent.js";
 import { registerDeleteAudienceMembers } from "./delete-audience-members.js";
 import { registerDeleteAudience } from "./delete-audience.js";
+import { registerDeleteBranch } from "./delete-branch.js";
 import { registerDeleteCampaign } from "./delete-campaign.js";
 import { registerDiff } from "./diff.js";
 import { registerDuplicateAgent } from "./duplicate-agent.js";
@@ -86,6 +87,7 @@ export function registerTools(server: McpServer) {
   registerListBranches(server);
   registerCreateBranch(server);
   registerRenameBranch(server);
+  registerDeleteBranch(server);
   registerMakeBranchLive(server);
   registerGetBranchDraft(server);
   registerPublishDraft(server);
