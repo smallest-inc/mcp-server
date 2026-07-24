@@ -63,6 +63,13 @@ import { registerTranscribeAudio } from "./transcribe-audio.js";
 import { registerUpdateAgent } from "./update-agent.js";
 import { registerUpdateBillingAlerts } from "./update-billing-alerts.js";
 import { registerValidateCoupon } from "./validate-coupon.js";
+import {
+  registerCreateWebhook,
+  registerDeleteWebhook,
+  registerGetWebhookEvents,
+  registerGetWebhooks,
+  registerUpdateWebhook,
+} from "./webhooks.js";
 
 export function registerTools(server: McpServer) {
   // Agent CRUD & editing
@@ -133,6 +140,13 @@ export function registerTools(server: McpServer) {
   registerGetPlans(server);
   registerValidateCoupon(server);
   registerRedeemCoupon(server);
+
+  // Webhooks (agent event subscriptions)
+  registerCreateWebhook(server);
+  registerGetWebhooks(server);
+  registerUpdateWebhook(server);
+  registerDeleteWebhook(server);
+  registerGetWebhookEvents(server);
 
   // Utilities
   registerGetPhoneNumbers(server);
