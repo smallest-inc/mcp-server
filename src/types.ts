@@ -32,6 +32,23 @@ export interface SynthesizerConfig {
   sampleRate?: number;
 }
 
+/** Post-call analytics metric types the platform evaluates per call. */
+export const DISPOSITION_METRIC_TYPES = ["STRING", "BOOLEAN", "INTEGER", "ENUM", "DATETIME"] as const;
+export type DispositionMetricType = (typeof DISPOSITION_METRIC_TYPES)[number];
+
+/** A single post-call disposition metric (agent-shaped / stored form). */
+export interface DispositionMetric {
+  identifier: string;
+  dispositionMetricPrompt: string;
+  dispositionMetricType: DispositionMetricType;
+  choices?: string[];
+}
+
+export interface PostCallAnalyticsConfig {
+  summaryPrompt?: string;
+  dispositionMetrics: DispositionMetric[];
+}
+
 export interface IAgentDTO {
   _id: string;
   name: string;
@@ -79,6 +96,7 @@ export interface IAgentDTO {
   speechFormatting?: boolean;
   enableStyleGuide?: boolean;
   callDispositionConfig?: string;
+  postCallAnalyticsConfig?: PostCallAnalyticsConfig;
   pronunciationDicts?: Array<{ word: string; pronunciation: string }>;
   llmIdleTimeoutConfig?: {
     chatTimeoutTimeInSecs: number;

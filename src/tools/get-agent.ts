@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
-import type { IAgentDTO } from "../types.js";
+import type { IAgentDTO, PostCallAnalyticsConfig } from "../types.js";
 
 export function registerGetAgent(server: McpServer) {
   server.registerTool(
@@ -24,7 +24,13 @@ export function registerGetAgent(server: McpServer) {
         return { content: [{ type: "text" as const, text: formatApiError(result) }] };
       }
 
-      const agent = (result.data?.data ?? result.data) as IAgentDTO;
+      const data = (result.data?.data ?? result.data) as IAgentDTO & {
+        _resolvedConfig?: { postCallAnalyticsConfig?: PostCallAnalyticsConfig };
+      };
+      const agent = data;
+      // postCallAnalyticsConfig is stripped from the DTO but carried on the
+      // handler's _resolvedConfig (the active version's resolved config).
+      const dispositionMetrics = data._resolvedConfig?.postCallAnalyticsConfig?.dispositionMetrics ?? [];
 
       return {
         content: [
@@ -71,6 +77,7 @@ export function registerGetAgent(server: McpServer) {
 
                 // Post-call & formatting
                 callDispositionConfig: agent.callDispositionConfig ?? null,
+                dispositionMetrics,
                 redactionConfig: agent.redactionConfig,
                 enableStyleGuide: agent.enableStyleGuide,
                 speechFormatting: agent.speechFormatting,
