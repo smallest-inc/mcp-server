@@ -119,6 +119,34 @@ export async function saveConfigToBranch(
   return { ok: true, value: { branchId } };
 }
 
+/**
+ * Read a branch's currently-effective resolved config — its open draft if one is
+ * open, else its committed head. Uses GET /agent/:id with draftId/versionId, the
+ * only path that resolves section blocks into a flat config (blocks store section
+ * references, not inline content). `draftRevision` is the draft's revision number
+ * (present only when reading an open draft) — pass it back as `expectedRevision`
+ * on the next write for optimistic-concurrency conflict detection.
+ */
+export async function readResolvedConfig(
+  agentId: string,
+  branch: Branch
+): Promise<BranchResult<{ config: Record<string, unknown>; draftRevision: number | null }>> {
+  let query = "";
+  if (branch.hasOpenDraft && branch.openDraftId) {
+    query = `?draftId=${encodeURIComponent(branch.openDraftId)}`;
+  } else if (branch.headRevisionId) {
+    query = `?versionId=${encodeURIComponent(branch.headRevisionId)}`;
+  }
+
+  const res = await atomsApi("GET", `/agent/${encodeURIComponent(agentId)}${query}`);
+  if (!res.ok) return { ok: false, message: formatApiError(res) };
+
+  const data = (res.data?.data ?? res.data) as Record<string, unknown>;
+  const config = (data?._resolvedConfig ?? {}) as Record<string, unknown>;
+  const draftRevision = (data?._configRevision as number | null) ?? null;
+  return { ok: true, value: { config, draftRevision } };
+}
+
 export type ScanState = "committed" | "scanning" | "failed";
 
 export interface PublishOutcome {

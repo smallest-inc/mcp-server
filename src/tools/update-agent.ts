@@ -2,17 +2,84 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
-import { resolveBranch, saveConfigToBranch } from "../versioning.js";
+import {
+  readResolvedConfig,
+  resolveBranch,
+  saveConfigToBranch,
+  type Branch,
+  type BranchResult,
+} from "../versioning.js";
 import { resolveProModelId } from "../voice-catalog.js";
 import { DRAFT_HINT } from "./agent-tools-helper.js";
-import type { IAgentDTO } from "../types.js";
+import { DISPOSITION_METRIC_TYPES, type DispositionMetric, type IAgentDTO, type PostCallAnalyticsConfig } from "../types.js";
+
+/** Disposition-metric identifiers: lowercase letters, digits, underscores. */
+const DISPOSITION_IDENTIFIER_RE = /^[a-z0-9_]+$/;
+
+interface DispositionMetricInput {
+  identifier: string;
+  prompt: string;
+  metric_type: (typeof DISPOSITION_METRIC_TYPES)[number];
+  choices?: string[];
+}
+
+type DispositionChangeResult =
+  | { ok: true; metrics: DispositionMetric[] }
+  | { ok: false; message: string };
+
+/**
+ * Apply add (upsert by identifier) then remove (by identifier) to the current
+ * metric list, returning the full replacement array. Mirrors the backend's
+ * validation (identifier format, ENUM needs choices, no dup identifiers) so the
+ * caller gets a clear error before the round-trip.
+ */
+function applyDispositionChanges(
+  current: DispositionMetric[],
+  adds: DispositionMetricInput[],
+  removes: string[]
+): DispositionChangeResult {
+  const addIds = adds.map((m) => m.identifier);
+  const dupes = [...new Set(addIds.filter((id, i) => addIds.indexOf(id) !== i))];
+  if (dupes.length > 0) {
+    return { ok: false, message: `Duplicate identifiers in add_disposition_metrics: ${dupes.join(", ")}` };
+  }
+  for (const m of adds) {
+    if (!DISPOSITION_IDENTIFIER_RE.test(m.identifier)) {
+      return {
+        ok: false,
+        message: `Invalid identifier "${m.identifier}" — use only lowercase letters, numbers, and underscores.`,
+      };
+    }
+    if (!m.prompt.trim()) {
+      return { ok: false, message: `Disposition metric "${m.identifier}" is missing a prompt.` };
+    }
+    if (m.metric_type === "ENUM" && !(m.choices && m.choices.length > 0)) {
+      return { ok: false, message: `Disposition metric "${m.identifier}" is type ENUM and needs at least one choice.` };
+    }
+  }
+
+  const removeSet = new Set(removes);
+  const byId = new Map<string, DispositionMetric>();
+  for (const m of current) {
+    if (!removeSet.has(m.identifier)) byId.set(m.identifier, m);
+  }
+  for (const m of adds) {
+    byId.set(m.identifier, {
+      identifier: m.identifier,
+      dispositionMetricPrompt: m.prompt,
+      dispositionMetricType: m.metric_type,
+      ...(m.choices && m.choices.length > 0 ? { choices: m.choices } : {}),
+    });
+  }
+  return { ok: true, metrics: [...byId.values()] };
+}
 
 export function registerUpdateAgent(server: McpServer) {
   server.registerTool(
     "update_agent",
     {
       description:
-        "Update an agent — name, prompt/instructions, first message, voice, model, language, variables, the pre-call API, and other settings. Only provided fields are updated. Config changes are saved to the branch's draft (publish_draft to make them live, or test first with test_agent using include_draft); metadata (name, phone numbers, inbound toggle) applies immediately. To add/remove the agent's API-call tools use add_agent_tool / remove_agent_tool; for end_call/transfer use configure_call_actions.",
+        "Update an agent — name, prompt/instructions, first message, voice, model, language, variables, the pre-call API, and other settings. Only provided fields are updated. Config changes are saved to the branch's draft (publish_draft to make them live, or test first with test_agent using include_draft); metadata (name, phone numbers, inbound toggle) applies immediately. To add/remove the agent's API-call tools use add_agent_tool / remove_agent_tool; for end_call/transfer use configure_call_actions. To manage post-call disposition metrics use add_disposition_metrics / remove_disposition_metrics (upsert/remove by identifier; existing metrics are preserved) — get_agent lists the current ones.",
       inputSchema: {
         agent_id: z.string().describe("The agent ID to update"),
         branch_id: z
@@ -183,6 +250,32 @@ export function registerUpdateAgent(server: McpServer) {
           .string()
           .optional()
           .describe("Call disposition configuration prompt"),
+        add_disposition_metrics: z
+          .array(
+            z.object({
+              identifier: z
+                .string()
+                .describe(
+                  "Unique id — lowercase letters, numbers, and underscores only (e.g. call_outcome). Re-adding an existing identifier updates it."
+                ),
+              prompt: z.string().describe("Instruction telling the model how to evaluate this metric after the call."),
+              metric_type: z
+                .enum(DISPOSITION_METRIC_TYPES)
+                .describe("Value type of the metric. ENUM requires a non-empty choices list."),
+              choices: z
+                .array(z.string())
+                .optional()
+                .describe("Allowed values — required when metric_type is ENUM, ignored otherwise."),
+            })
+          )
+          .optional()
+          .describe(
+            "Post-call disposition metrics to add or update (upsert by identifier). Only these are changed; existing metrics and the summary prompt are preserved. Saved to the branch draft."
+          ),
+        remove_disposition_metrics: z
+          .array(z.string())
+          .optional()
+          .describe("Identifiers of post-call disposition metrics to remove from the branch draft."),
         enable_style_guide: z.boolean().optional().describe("Enable conversational style guide"),
         telephony_product_ids: z
           .array(z.string())
@@ -242,6 +335,14 @@ export function registerUpdateAgent(server: McpServer) {
           ],
         };
       }
+
+      // Resolve the branch at most once — both the disposition read-modify-write
+      // and the config write below need it.
+      let branchCache: BranchResult<Branch> | undefined;
+      const getBranch = async (): Promise<BranchResult<Branch>> => {
+        if (branchCache === undefined) branchCache = await resolveBranch(params.agent_id, params.branch_id);
+        return branchCache;
+      };
 
       const body: Record<string, unknown> = {};
       if (params.name !== undefined) body.name = params.name;
@@ -362,6 +463,41 @@ export function registerUpdateAgent(server: McpServer) {
         body.preCallAPI = preCallAPI;
       }
 
+      // Disposition metrics — add/upsert and/or remove. The backend only supports
+      // full-array replace on postCallAnalyticsConfig, so read the branch's current
+      // metrics, apply the changes, and write the whole array back (masking the
+      // replace from the caller). expectedRevision (present only when a draft is
+      // already open) guards against a concurrent edit clobbering the analytics
+      // section between our read and write.
+      let expectedRevision: number | null = null;
+      const wantsDispositionChange =
+        (params.add_disposition_metrics?.length ?? 0) > 0 ||
+        (params.remove_disposition_metrics?.length ?? 0) > 0;
+      if (wantsDispositionChange) {
+        const branch = await getBranch();
+        if (!branch.ok) {
+          return { content: [{ type: "text" as const, text: branch.message }] };
+        }
+        const resolved = await readResolvedConfig(params.agent_id, branch.value);
+        if (!resolved.ok) {
+          return { content: [{ type: "text" as const, text: resolved.message }] };
+        }
+        const pca = resolved.value.config.postCallAnalyticsConfig as PostCallAnalyticsConfig | undefined;
+        const applied = applyDispositionChanges(
+          pca?.dispositionMetrics ?? [],
+          params.add_disposition_metrics ?? [],
+          params.remove_disposition_metrics ?? []
+        );
+        if (!applied.ok) {
+          return { content: [{ type: "text" as const, text: applied.message }] };
+        }
+        body.postCallAnalyticsConfig = {
+          ...(pca?.summaryPrompt !== undefined && { summaryPrompt: pca.summaryPrompt }),
+          dispositionMetrics: applied.metrics,
+        };
+        expectedRevision = resolved.value.draftRevision;
+      }
+
       if (Object.keys(body).length === 0) {
         return {
           content: [{ type: "text" as const, text: "No fields provided to update." }],
@@ -402,7 +538,7 @@ export function registerUpdateAgent(server: McpServer) {
 
       // Update config via the chosen branch's draft if any config fields
       if (Object.keys(configFields).length > 0) {
-        const branch = await resolveBranch(params.agent_id, params.branch_id);
+        const branch = await getBranch();
         if (!branch.ok) {
           return {
             content: [
@@ -414,7 +550,8 @@ export function registerUpdateAgent(server: McpServer) {
           };
         }
 
-        const saved = await saveConfigToBranch(params.agent_id, branch.value.branchId, configFields);
+        const payload = expectedRevision != null ? { ...configFields, expectedRevision } : configFields;
+        const saved = await saveConfigToBranch(params.agent_id, branch.value.branchId, payload);
         if (!saved.ok) {
           return {
             content: [
@@ -438,6 +575,9 @@ export function registerUpdateAgent(server: McpServer) {
                   message: messages.join(". "),
                   agentId: params.agent_id,
                   status: "draft",
+                  ...(body.postCallAnalyticsConfig
+                    ? { dispositionMetrics: (body.postCallAnalyticsConfig as PostCallAnalyticsConfig).dispositionMetrics }
+                    : {}),
                   hint: DRAFT_HINT,
                 },
                 null,
