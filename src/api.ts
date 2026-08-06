@@ -51,22 +51,7 @@ export async function atomsApi(
   return { ok: response.ok, status: response.status, data };
 }
 
-/** Backend discriminator (branch-model-guard.ts) for deprecated v1 versioning endpoints. */
-const VERSIONING_V2_MIGRATION_ERROR = "versioning_v2_migration_required";
-
 export function formatApiError(result: ApiResult): string {
-  // Config freeze: the backend locks all config writes during a maintenance window (HTTP 423).
-  // Surface it as a clear, non-alarming state — reads and test-calls are unaffected.
-  if (result.status === 423) {
-    return "Agent config is frozen for a maintenance window — edits are paused. Test-calls and reads still work; try your edit again shortly.";
-  }
-
-  // Deprecated v1 versioning endpoint after the branch-model cutover. This should not happen once
-  // migrated; if it does, the MCP is out of date relative to the backend.
-  if (result.data?.error_type === VERSIONING_V2_MIGRATION_ERROR) {
-    return "This Smallest MCP server is out of date and called a deprecated endpoint. Update it (restart your editor to pull the latest, or re-run the installer), then try again.";
-  }
-
   const msg = result.data?.message ?? result.data?.error ?? JSON.stringify(result.data);
   return `API error ${result.status}: ${msg}`;
 }
