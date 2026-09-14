@@ -181,6 +181,44 @@ export interface ICallCountsLogEntry {
   toNumber?: string;
 }
 
+/** Call-level LLM usage from GET /conversation/:id (mirrors ICallUsageDTO in @repo/atoms-types) */
+export interface ICallUsageDTO {
+  promptTokens: number;
+  completionTokens: number;
+  /** Input tokens served from the prompt cache (cache read). */
+  cachedTokens: number;
+  /** Input tokens spent creating cache entries (cache write). */
+  cacheCreationTokens: number;
+  llmCalls: number;
+  /** Cache-read share of total input tokens, 0-100; null when no input. */
+  cacheHitPct: number | null;
+}
+
+/** Per-turn LLM timings from GET /conversation/:id (mirrors ICallTurnStatsDTO) */
+export interface ICallTurnStatsDTO {
+  /** 1-based turn number; joins with `turnIndex` on transcript rows. */
+  turnIndex: number;
+  ttfbMs: number | null;
+  llmGenerationMs: number | null;
+  turnMs: number | null;
+  llmCalls: number;
+  tokens: { prompt: number; completion: number; cached: number };
+}
+
+/** Per-tool-call timing and token cost from GET /conversation/:id (mirrors ICallToolCallDTO) */
+export interface ICallToolCallDTO {
+  toolCallId: string | null;
+  name: string | null;
+  timestamp: string | null;
+  url: string | null;
+  executionMs: number | null;
+  contextTokens: number | null;
+  groupContextTokens: number | null;
+  tokenGroupId: string | null;
+  arguments: unknown;
+  response: unknown;
+}
+
 // ─── Phone Number Types ───────────────────────────────────────────────────────
 
 /** Response entry from GET /product/phone-numbers */

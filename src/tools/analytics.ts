@@ -157,6 +157,22 @@ export function registerGetCreditUsage(server: McpServer) {
   );
 }
 
+export function registerGetLatencySummary(server: McpServer) {
+  server.registerTool(
+    "get_latency_summary",
+    {
+      description:
+        "Get perceived-latency KPIs for the org over a date range — avg/p50/p95/p99 caller-perceived latency (ms) and the number of calls with latency data, a per-day timeseries, and cross-call avg/p95 per pipeline stage (stt_api, stt_to_llm, smart_turn, llm_api, llm_to_tts, tts_api, tts_to_audio). Use debug_call for one call's per-turn numbers.",
+      inputSchema: {
+        start_date: analyticsFilterSchema.start_date,
+        end_date: analyticsFilterSchema.end_date,
+        agent_name: analyticsFilterSchema.agent_name,
+      },
+    },
+    (params) => callAnalyticsEndpoint("latency-summary", params)
+  );
+}
+
 // ─── Date-Scoped Analytics (single day) ──────────────────────────────────────
 
 export function registerGetConcurrency(server: McpServer) {
@@ -210,6 +226,7 @@ export function registerAnalyticsTools(server: McpServer) {
   registerGetAttemptCohorts(server);
   registerGetCallCountsByDay(server);
   registerGetCreditUsage(server);
+  registerGetLatencySummary(server);
   registerGetConcurrency(server);
   registerGetCallStartDistribution(server);
   registerGetDailySummary(server);

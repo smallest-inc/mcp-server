@@ -2,13 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import type { ICallToolCallDTO, ICallTurnStatsDTO, ICallUsageDTO } from "../types.js";
 
 export function registerDebugCall(server: McpServer) {
   server.registerTool(
     "debug_call",
     {
       description:
-        "Get detailed info about a single call — use this to check call status, debug failures, or get transcripts. Returns call status, failure reasons, errors, transcript, post-call analytics, latency metrics, cost breakdown, variables, voice/model config at time of call, and full event timeline. Works for calls in any state (queued, in-progress, completed, failed). Use a callId (e.g. CALL-1234567890-abc123).",
+        "Get detailed info about a single call — use this to check call status, debug failures, or get transcripts. Returns call status, failure reasons, errors, transcript, post-call analytics, latency metrics, cost breakdown, variables, voice/model config at time of call, and full event timeline. Also returns the call's LLM insights: `usage` (prompt/completion/cached tokens, LLM call count, prompt-cache hit %), `turns` (per-turn LLM TTFB, generation time, turn time, tokens) and `toolCalls` (per-tool execution time and context tokens). Works for calls in any state (queued, in-progress, completed, failed). Use a callId (e.g. CALL-1234567890-abc123).",
       inputSchema: {
         call_id: z.string().describe("The callId to debug (e.g. CALL-1234567890-abc123)"),
       },
@@ -59,9 +60,21 @@ export function registerDebugCall(server: McpServer) {
         output.variables = logsData.variables;
       }
 
-      // Latency metrics (pre-computed from MongoDB, more reliable than recalculating)
+      // Perceived latency (post-call audio analysis: caller stops -> bot audible)
       if (logsData?.turnLatencyMetrics) {
         output.turnLatencyMetrics = logsData.turnLatencyMetrics;
+      }
+
+      // LLM insights, derived by the backend from the runtime's own metrics.
+      // `usage` carries the prompt-cache hit %, `turns` the per-turn LLM timings.
+      if (logsData?.usage) {
+        output.usage = logsData.usage as ICallUsageDTO;
+      }
+      if (Array.isArray(logsData?.turns) && logsData.turns.length > 0) {
+        output.turns = logsData.turns as ICallTurnStatsDTO[];
+      }
+      if (Array.isArray(logsData?.toolCalls) && logsData.toolCalls.length > 0) {
+        output.toolCalls = logsData.toolCalls as ICallToolCallDTO[];
       }
 
       // Agent config at time of call

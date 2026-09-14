@@ -18,7 +18,7 @@ const EXPECTED = [
   // playbooks
   "get_playbooks", "add_playbooks", "update_playbook", "configure_playbooks",
   // calls
-  "make_call", "debug_call", "list_calls",
+  "make_call", "debug_call", "list_calls", "get_latency_summary",
 ];
 
 // Removed in the v2 cutover — must NOT be present.
