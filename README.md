@@ -61,7 +61,8 @@ Reload your editor, then type: **"List all my agents"**
 | Tool | Description |
 |---|---|
 | `list_calls` | Search and list calls with filters for status, type, date range, agent, phone number |
-| `debug_call` | Get detailed info about a single call — status, transcript, errors, analytics, latency |
+| `debug_call` | Get detailed info about a single call — status, transcript, errors, analytics, perceived latency, LLM usage with prompt-cache hit %, per-turn LLM timings, tool-call timings |
+| `get_latency_summary` | Org-level perceived-latency KPIs (avg/p50/p95/p99), daily trend, and per-pipeline-stage averages over a date range |
 | `get_agents` | List agents with their configuration, voice, LLM model, and call stats |
 | `get_agent` | Get full details for a single agent |
 | `get_agent_prompt` | Read an agent's current system prompt and tools |
