@@ -20,7 +20,7 @@ export async function paymentsApi(
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
-  const { apiKey } = requireContext();
+  const { apiKey } = requireContext("for payment API calls");
 
   const org = await getAuthenticatedOrg();
 

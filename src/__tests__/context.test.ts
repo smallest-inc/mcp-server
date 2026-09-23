@@ -98,6 +98,64 @@ describe("request-scoped credentials", () => {
     expect(captured.find((c) => c.url.endsWith("/agent"))?.authorization).toBe("Bearer env-key");
   });
 
+  it("stops trusting a resolved org once the TTL passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const captured = stubFetch();
+      const resolve = () =>
+        runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+          getAuthenticatedOrg()
+        );
+
+      await resolve();
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      await resolve();
+      // Still inside the 5 minute TTL — served from cache.
+      expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(1);
+
+      vi.advanceTimersByTime(2 * 60 * 1000);
+      await resolve();
+      // Past it. This is the window in which a revoked key keeps working, so it
+      // has to actually expire.
+      expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves one org per key even when many callers arrive at once", async () => {
+    const captured = stubFetch();
+
+    await Promise.all(
+      Array.from({ length: 10 }, () =>
+        runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+          getAuthenticatedOrg()
+        )
+      )
+    );
+
+    expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(1);
+  });
+
+  it("keeps the same key apart across different API bases", async () => {
+    const captured = stubFetch();
+
+    const dev = await runWithContext(
+      { apiKey: "same-key", apiUrl: "https://dev.example/atoms/v1" },
+      () => getAuthenticatedOrg()
+    );
+    const prod = await runWithContext(
+      { apiKey: "same-key", apiUrl: "https://prod.example/atoms/v1" },
+      () => getAuthenticatedOrg()
+    );
+
+    // One key can name different orgs on different backends, so a cache keyed
+    // on the key alone would serve the dev org to the prod caller.
+    expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(2);
+    expect(dev.orgId).toBe("org-for-same-key");
+    expect(prod.orgId).toBe("org-for-same-key");
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });

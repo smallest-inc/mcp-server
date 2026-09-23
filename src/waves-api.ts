@@ -26,7 +26,7 @@ export async function wavesApi(
   };
 
   if (options?.auth) {
-    headers.Authorization = `Bearer ${requireContext().apiKey}`;
+    headers.Authorization = `Bearer ${requireContext("for authenticated Waves API calls").apiKey}`;
   }
 
   const init: RequestInit = { method, headers };

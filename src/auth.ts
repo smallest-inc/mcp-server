@@ -29,8 +29,15 @@ const ORG_CACHE_MAX_ENTRIES = 1_000;
  */
 const orgCache = new Map<string, CacheEntry>();
 
-function cacheKeyFor(apiKey: string): string {
-  return createHash("sha256").update(apiKey).digest("hex");
+/**
+ * Includes the API base, not just the key. One key resolves to different
+ * organizations against different backends, and the context now carries a
+ * per-caller apiUrl — so keying on the key alone could serve a dev org to a
+ * prod request. NUL separates the fields so they cannot be confused for one
+ * another by concatenation.
+ */
+function cacheKeyFor(apiKey: string, apiUrl: string): string {
+  return createHash("sha256").update(`${apiKey}\u0000${apiUrl}`).digest("hex");
 }
 
 function readCache(key: string): AuthenticatedOrg | null {
@@ -61,9 +68,17 @@ function writeCache(key: string, org: AuthenticatedOrg): void {
   orgCache.set(key, { org, expiresAt: now + ORG_CACHE_TTL_MS });
 }
 
-/** Test seam: drop all cached organizations. */
+/**
+ * Lookups already in flight, so a burst of concurrent first-use requests for
+ * one key makes one call to the account endpoint rather than one per request.
+ * Entries are removed as soon as they settle; failures are never cached.
+ */
+const inFlight = new Map<string, Promise<AuthenticatedOrg>>();
+
+/** Test seam: drop all cached organizations and in-flight lookups. */
 export function clearOrgCache(): void {
   orgCache.clear();
+  inFlight.clear();
 }
 
 /**
@@ -78,10 +93,27 @@ export function clearOrgCache(): void {
 export async function getAuthenticatedOrg(): Promise<AuthenticatedOrg> {
   const { apiKey, apiUrl } = requireContext();
 
-  const key = cacheKeyFor(apiKey);
+  const key = cacheKeyFor(apiKey, apiUrl);
   const cached = readCache(key);
   if (cached) return cached;
 
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const lookup = resolveOrg(apiKey, apiUrl)
+    .then((org) => {
+      writeCache(key, org);
+      return org;
+    })
+    .finally(() => {
+      inFlight.delete(key);
+    });
+
+  inFlight.set(key, lookup);
+  return lookup;
+}
+
+async function resolveOrg(apiKey: string, apiUrl: string): Promise<AuthenticatedOrg> {
   const response = await fetch(`${apiUrl}/account/get-account-details`, {
     method: "GET",
     headers: {
@@ -113,12 +145,8 @@ export async function getAuthenticatedOrg(): Promise<AuthenticatedOrg> {
     throw new Error("No organizations found for this API key.");
   }
 
-  const org: AuthenticatedOrg = {
+  return {
     orgId: orgs[0].orgId,
     userId: data.userId,
   };
-
-  writeCache(key, org);
-
-  return org;
 }
