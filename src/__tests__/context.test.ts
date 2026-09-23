@@ -2,7 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { atomsApi } from "../api.js";
 import { clearOrgCache, getAuthenticatedOrg } from "../auth.js";
-import { requireContext, runWithContext, setProcessDefault } from "../context.js";
+import type { RequestContext } from "../context.js";
+import { contextFromEnv, requireContext, runWithContext, setProcessDefault } from "../context.js";
+import { paymentsApi } from "../payments-api.js";
+import { wssBaseUrl } from "../tools/chat.js";
+import { wavesApi } from "../waves-api.js";
+
+/** A context whose every base is distinct, so a wrong one is obvious in the URL. */
+function ctx(apiKey: string, host = "a"): RequestContext {
+  return {
+    apiKey,
+    apiUrl: `https://${host}.example/atoms/v1`,
+    wavesUrl: `https://${host}.example/waves/v1`,
+    paymentsUrl: `https://${host}.example/payment/v1`,
+  };
+}
 
 interface Captured {
   url: string;
@@ -43,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   clearOrgCache();
   setProcessDefault(null);
 });
@@ -52,11 +67,11 @@ describe("request-scoped credentials", () => {
     const captured = stubFetch();
 
     const [orgA, orgB] = await Promise.all([
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, async () => {
+      runWithContext(ctx("key-a", "a"), async () => {
         await atomsApi("GET", "/agent");
         return getAuthenticatedOrg();
       }),
-      runWithContext({ apiKey: "key-b", apiUrl: "https://b.example/atoms/v1" }, async () => {
+      runWithContext(ctx("key-b", "b"), async () => {
         await atomsApi("GET", "/agent");
         return getAuthenticatedOrg();
       }),
@@ -76,7 +91,7 @@ describe("request-scoped credentials", () => {
     const captured = stubFetch();
 
     const run = (apiKey: string) =>
-      runWithContext({ apiKey, apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg());
+      runWithContext(ctx(apiKey), () => getAuthenticatedOrg());
 
     await run("key-a");
     await run("key-a");
@@ -91,7 +106,7 @@ describe("request-scoped credentials", () => {
 
   it("falls back to the process default when no context is in scope", async () => {
     const captured = stubFetch();
-    setProcessDefault({ apiKey: "env-key", apiUrl: "https://env.example/atoms/v1" });
+    setProcessDefault(ctx("env-key", "env"));
 
     await atomsApi("GET", "/agent");
 
@@ -103,7 +118,7 @@ describe("request-scoped credentials", () => {
     try {
       const captured = stubFetch();
       const resolve = () =>
-        runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+        runWithContext(ctx("key-a", "a"), () =>
           getAuthenticatedOrg()
         );
 
@@ -128,7 +143,7 @@ describe("request-scoped credentials", () => {
 
     await Promise.all(
       Array.from({ length: 10 }, () =>
-        runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+        runWithContext(ctx("key-a", "a"), () =>
           getAuthenticatedOrg()
         )
       )
@@ -141,11 +156,11 @@ describe("request-scoped credentials", () => {
     const captured = stubFetch();
 
     const dev = await runWithContext(
-      { apiKey: "same-key", apiUrl: "https://dev.example/atoms/v1" },
+      ctx("same-key", "dev"),
       () => getAuthenticatedOrg()
     );
     const prod = await runWithContext(
-      { apiKey: "same-key", apiUrl: "https://prod.example/atoms/v1" },
+      ctx("same-key", "prod"),
       () => getAuthenticatedOrg()
     );
 
@@ -165,7 +180,7 @@ describe("request-scoped credentials", () => {
     });
 
     const run = () =>
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+      runWithContext(ctx("key-a", "a"), () =>
         getAuthenticatedOrg()
       );
 
@@ -190,7 +205,7 @@ describe("request-scoped credentials", () => {
     });
 
     const run = () =>
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+      runWithContext(ctx("key-a", "a"), () =>
         getAuthenticatedOrg()
       );
 
@@ -206,19 +221,19 @@ describe("request-scoped credentials", () => {
 
     // One more than the 1000-entry bound.
     for (let i = 0; i < 1001; i += 1) {
-      await runWithContext({ apiKey: `key-${i}`, apiUrl: "https://a.example/atoms/v1" }, () =>
+      await runWithContext(ctx(`key-${i}`), () =>
         getAuthenticatedOrg()
       );
     }
 
     const captured = stubFetch();
     // key-0 was evicted, so it resolves again; the most recent key is still cached.
-    await runWithContext({ apiKey: "key-1000", apiUrl: "https://a.example/atoms/v1" }, () =>
+    await runWithContext(ctx("key-1000", "a"), () =>
       getAuthenticatedOrg()
     );
     expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(0);
 
-    await runWithContext({ apiKey: "key-0", apiUrl: "https://a.example/atoms/v1" }, () =>
+    await runWithContext(ctx("key-0", "a"), () =>
       getAuthenticatedOrg()
     );
     expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(1);
@@ -235,7 +250,7 @@ describe("request-scoped credentials", () => {
     // A non-string id would coerce to "[object Object]" and ride on every
     // payments call as X-Organization-Id.
     await expect(
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
+      runWithContext(ctx("key-a"), () => getAuthenticatedOrg())
     ).rejects.toThrow(/Could not read the account details/);
   });
 
@@ -248,7 +263,7 @@ describe("request-scoped credentials", () => {
 
     // Hosted, this message reaches the client verbatim.
     await expect(
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
+      runWithContext(ctx("key-a"), () => getAuthenticatedOrg())
     ).rejects.toThrow(/^Failed to verify API key: 502$/);
   });
 
@@ -275,15 +290,50 @@ describe("request-scoped credentials", () => {
     ).toBe("API error 404: Agent not found");
   });
 
+  it("sends every upstream to the context's base, not a pinned prod host", async () => {
+    const captured = stubFetch();
+
+    await runWithContext(ctx("key-a"), async () => {
+      await atomsApi("GET", "/agent");
+      await wavesApi("GET", "/voice", { auth: true });
+      await paymentsApi("GET", "/invoice");
+    });
+
+    const urls = captured.map((c) => c.url);
+    expect(urls).toContain("https://a.example/atoms/v1/agent");
+    expect(urls).toContain("https://a.example/waves/v1/voice");
+    expect(urls).toContain("https://a.example/payment/v1/invoice");
+    expect(urls.some((u) => u.includes("api.smallest.ai"))).toBe(false);
+  });
+
+  it("derives the chat WebSocket base from the caller's API base", () => {
+    // The bug this PR exists for: chat.ts pinned prod and ignored ATOMS_API_URL,
+    // so a chat against dev was impossible.
+    expect(wssBaseUrl("https://api.dev.smallest.ai/atoms/v1")).toBe(
+      "wss://api.dev.smallest.ai/atoms/v1"
+    );
+    expect(wssBaseUrl("http://atoms-mainbackend:4001/atoms/v1")).toBe(
+      "ws://atoms-mainbackend:4001/atoms/v1"
+    );
+  });
+
+  it("strips a trailing slash from a configured base", () => {
+    vi.stubEnv("ATOMS_API_KEY", "key-a");
+    vi.stubEnv("WAVES_API_URL", "https://a.example/waves/v1/");
+
+    // Callers append paths that already start with "/", so a kept slash gives "//tts".
+    expect(contextFromEnv()?.wavesUrl).toBe("https://a.example/waves/v1");
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });
 
   it("does not let a process default leak into an explicit context", async () => {
     const captured = stubFetch();
-    setProcessDefault({ apiKey: "env-key", apiUrl: "https://env.example/atoms/v1" });
+    setProcessDefault(ctx("env-key", "env"));
 
-    await runWithContext({ apiKey: "req-key", apiUrl: "https://req.example/atoms/v1" }, () =>
+    await runWithContext(ctx("req-key", "req"), () =>
       atomsApi("GET", "/agent")
     );
 

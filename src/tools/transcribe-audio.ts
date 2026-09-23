@@ -2,14 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { readFile } from "fs/promises";
 
+import { requireContext } from "../context.js";
 import { formatWavesApiError } from "../waves-api.js";
 
-const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
-const getApiKey = () => {
-  const key = process.env.ATOMS_API_KEY;
-  if (!key) throw new Error("ATOMS_API_KEY environment variable is required");
-  return key;
-};
+const getApiKey = () => requireContext("for Waves API calls").apiKey;
+const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
 
 export function registerTranscribeAudio(server: McpServer) {
   server.registerTool(
@@ -77,7 +74,7 @@ export function registerTranscribeAudio(server: McpServer) {
       if (params.emotion_detection) queryParams.set("emotion_detection", "true");
       if (params.redact_pii) queryParams.set("redact_pii", "true");
 
-      const url = `${WAVES_API_URL}/pulse/get_text?${queryParams.toString()}`;
+      const url = `${wavesUrl()}/pulse/get_text?${queryParams.toString()}`;
 
       let response: Response;
 

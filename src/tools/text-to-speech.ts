@@ -4,14 +4,11 @@ import { writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
+import { requireContext } from "../context.js";
 import { formatWavesApiError } from "../waves-api.js";
 
-const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
-const getApiKey = () => {
-  const key = process.env.ATOMS_API_KEY;
-  if (!key) throw new Error("ATOMS_API_KEY environment variable is required");
-  return key;
-};
+const getApiKey = () => requireContext("for Waves API calls").apiKey;
+const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
 
 export function registerTextToSpeech(server: McpServer) {
   server.registerTool(
@@ -66,7 +63,7 @@ export function registerTextToSpeech(server: McpServer) {
       };
 
       // Waves v4: single /tts endpoint, model selected via the request body.
-      const url = `${WAVES_API_URL}/tts`;
+      const url = `${wavesUrl()}/tts`;
 
       // The Accept header signals the desired audio container to the server.
       const acceptByFormat: Record<string, string> = {

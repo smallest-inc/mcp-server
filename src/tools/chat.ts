@@ -2,12 +2,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AtomsChatClient, ChatTurn } from "../chat-client.js";
+import { requireContext } from "../context.js";
 
-const ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
-
-/** Derive the realtime WebSocket base from the HTTP API base. */
-function wssBaseUrl(): string {
-  return ATOMS_API_URL.replace(/^http/i, "ws");
+/**
+ * Derive the realtime WebSocket base from the caller's HTTP API base:
+ * https -> wss, http -> ws. Exported for tests — this is the whole reason a
+ * chat against a non-prod backend was impossible before.
+ */
+export function wssBaseUrl(apiUrl: string): string {
+  return apiUrl.replace(/^http/i, "ws");
 }
 
 function renderTranscript(turns: ChatTurn[]): string {
@@ -69,18 +72,21 @@ export function registerChatWithAgent(server: McpServer) {
       },
     },
     async (params) => {
-      const apiKey = process.env.ATOMS_API_KEY;
-      if (!apiKey) {
+      let apiKey: string;
+      let apiUrl: string;
+      try {
+        ({ apiKey, apiUrl } = requireContext("for chat"));
+      } catch (err) {
         return {
           isError: true,
-          content: [{ type: "text" as const, text: "ATOMS_API_KEY environment variable is required" }],
+          content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
         };
       }
 
       const client = new AtomsChatClient({
         apiKey,
         agentId: params.agent_id,
-        baseWssUrl: wssBaseUrl(),
+        baseWssUrl: wssBaseUrl(apiUrl),
         variables: params.variables,
       });
 

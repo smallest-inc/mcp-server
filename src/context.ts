@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** Default Atoms API base. Overridable per context for non-prod environments. */
+/** Default API bases. Overridable per context for non-prod environments. */
 export const DEFAULT_ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
+export const DEFAULT_WAVES_API_URL = "https://api.smallest.ai/waves/v1";
+export const DEFAULT_PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
 
 /**
  * The credentials and endpoints belonging to ONE caller.
@@ -15,8 +17,12 @@ export const DEFAULT_ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
  */
 export interface RequestContext {
   apiKey: string;
-  /** Atoms API base, no trailing slash. */
+  /** Atoms API base, no trailing slash. The chat WebSocket base is derived from it. */
   apiUrl: string;
+  /** Waves API base, no trailing slash. */
+  wavesUrl: string;
+  /** Payments API base, no trailing slash. */
+  paymentsUrl: string;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
@@ -71,5 +77,7 @@ export function contextFromEnv(): RequestContext | null {
     // Trailing slashes are stripped because every caller appends a path that
     // already starts with one — a base ending in "/" would produce "//agent".
     apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
+    wavesUrl: stripTrailingSlash(process.env.WAVES_API_URL || DEFAULT_WAVES_API_URL),
+    paymentsUrl: stripTrailingSlash(process.env.PAYMENTS_API_URL || DEFAULT_PAYMENTS_API_URL),
   };
 }
