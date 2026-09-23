@@ -42,10 +42,12 @@ export function runWithContext<T>(context: RequestContext, fn: () => T): T {
  * The calling context. Throws if nothing established one — which for the stdio
  * server means ATOMS_API_KEY was unset.
  */
-export function requireContext(): RequestContext {
+export function requireContext(purpose?: string): RequestContext {
   const context = store.getStore() ?? processDefault;
   if (!context) {
-    throw new Error("ATOMS_API_KEY environment variable is required");
+    throw new Error(
+      `ATOMS_API_KEY environment variable is required${purpose ? ` ${purpose}` : ""}`
+    );
   }
   return context;
 }
@@ -57,11 +59,17 @@ export function requireContext(): RequestContext {
  * starts without a key and fails on the first tool call, so a user who is still
  * editing their MCP config sees a tool error instead of a server that won't boot.
  */
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 export function contextFromEnv(): RequestContext | null {
   const apiKey = process.env.ATOMS_API_KEY;
   if (!apiKey) return null;
   return {
     apiKey,
-    apiUrl: process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL,
+    // Trailing slashes are stripped because every caller appends a path that
+    // already starts with one — a base ending in "/" would produce "//agent".
+    apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
   };
 }
