@@ -1,0 +1,133 @@
+name: Build and Deploy hosted MCP server
+
+# Mirrors atoms-platform's integrations-deploy.yaml.
+#
+# PREREQUISITES, none of which this repo can create for itself:
+#   - ECR repos <env>/mcp in account 301490598848 (smallest-infra)
+#   - helm-charts/mcp/env/<env>/ap-south-1.yaml in smallest-infra
+#   - repo secrets GH_APP_ID and GH_APP_PRIVATE_KEY, for the app token that
+#     pushes the image-tag bump to smallest-infra
+# Until those exist this workflow will fail at the first AWS step, by design —
+# it is not wired to any push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: "dev"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set-vars.outputs.image_tag }}
+      environment: ${{ steps.set-vars.outputs.environment }}
+
+    steps:
+      - name: Validate branch for prod deployment
+        if: github.event.inputs.environment == 'prod' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Production deployments are only allowed from the main branch. Current branch: ${GITHUB_REF}"
+          exit 1
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment and image tag
+        id: set-vars
+        run: |
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          echo "image_tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials (ap-south-1)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::301490598848:role/smallest-dev-iam-github-eks-role
+          aws-region: ap-south-1
+
+      - name: Login to ECR (ap-south-1)
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: 301490598848
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Layer cache lives in ECR under the `buildcache` tag. ignore-error on
+      # cache-to: a failed cache export must never fail the deploy.
+      - name: Build and push image (ap-south-1)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:${{ steps.set-vars.outputs.image_tag }}
+          cache-from: type=registry,ref=301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:buildcache
+          cache-to: type=registry,ref=301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ needs.build-and-push.outputs.environment }}
+
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: smallest-inc
+          repositories: smallest-infra
+
+      - name: Install yq
+        uses: mikefarah/yq@master
+
+      - name: Checkout smallest-infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: smallest-inc/smallest-infra
+          token: ${{ steps.app-token.outputs.token }}
+          path: smallest-infra
+
+      # ArgoCD syncs from the chart, so the deploy is a commit to it.
+      - name: Update image tag in helm values
+        env:
+          TAG_SHA: ${{ needs.build-and-push.outputs.image_tag }}
+          ENVIRONMENT: ${{ needs.build-and-push.outputs.environment }}
+        run: |
+          yq -i ".image.tag = \"${TAG_SHA}\"" "smallest-infra/helm-charts/mcp/env/${ENVIRONMENT}/ap-south-1.yaml"
+
+      - name: Commit and push helm values update
+        env:
+          TAG_SHA: ${{ needs.build-and-push.outputs.image_tag }}
+          ENVIRONMENT: ${{ needs.build-and-push.outputs.environment }}
+        run: |
+          cd smallest-infra
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "helm-charts/mcp/env/${ENVIRONMENT}/ap-south-1.yaml"
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            SHORT_SHA="${TAG_SHA:0:7}"
+            git commit -m "chore(mcp): update ${ENVIRONMENT} image tag to ${SHORT_SHA}
+
+          Triggered by: ${{ github.repository }}@${TAG_SHA}
+          Workflow: ${{ github.workflow }}
+          Actor: ${{ github.actor }}"
+            git push
+          fi
