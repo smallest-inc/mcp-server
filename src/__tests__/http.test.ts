@@ -332,6 +332,28 @@ describe("hosted HTTP transport", () => {
     expect(body).toContain("102");
   });
 
+  it("does not offer text_to_speech, which can only write to a local disk", async () => {
+    stubUpstreams();
+
+    await rpc(INITIALIZE, { Authorization: "Bearer sk_live" });
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { Authorization: "Bearer sk_live" }
+    );
+    const body = await res.text();
+
+    // Hosted, "the filesystem" is a pod's ephemeral disk the caller can never
+    // reach, so writing there and reporting success would be a lie.
+    const tools = JSON.parse(body.replace(/^.*?data: /s, "")).result.tools;
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("text_to_speech");
+    // transcribe_audio stays: it already accepts audio_url.
+    expect(names).toContain("transcribe_audio");
+  });
+
+
+
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

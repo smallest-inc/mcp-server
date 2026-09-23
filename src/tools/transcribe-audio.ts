@@ -8,7 +8,11 @@ import { formatWavesApiError } from "../waves-api.js";
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
 const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
 
-export function registerTranscribeAudio(server: McpServer) {
+export function registerTranscribeAudio(
+  server: McpServer,
+  options: { localFilesystem?: boolean } = {}
+) {
+  const { localFilesystem = true } = options;
   server.registerTool(
     "transcribe_audio",
     {
@@ -55,6 +59,21 @@ export function registerTranscribeAudio(server: McpServer) {
       },
     },
     async (params) => {
+      if (params.file_path && !localFilesystem) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "file_path is not available on the hosted server — paths there are on the server, " +
+                "not your machine. Pass audio_url with a publicly reachable URL instead, or run the " +
+                "MCP server locally (npx @developer-smallestai/smallest-mcp-server) to read local files.",
+            },
+          ],
+        };
+      }
+
       if (!params.file_path && !params.audio_url) {
         return {
           content: [
