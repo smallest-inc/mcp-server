@@ -1,7 +1,6 @@
 import { getAuthenticatedOrg } from "./auth.js";
+import { ATOMS_API_URL } from "./config.js";
 
-// Overridable for non-prod environments (e.g. https://api.dev.smallest.ai/atoms/v1).
-const ATOMS_API_URL = process.env.ATOMS_API_URL || "https://api.smallest.ai/atoms/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface ApiResult {
