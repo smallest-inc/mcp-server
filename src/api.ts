@@ -1,8 +1,5 @@
 import { getAuthenticatedOrg } from "./auth.js";
-
-// Overridable for non-prod environments (e.g. https://api.dev.smallest.ai/atoms/v1).
-const ATOMS_API_URL = process.env.ATOMS_API_URL || "https://api.smallest.ai/atoms/v1";
-const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
+import { requireContext } from "./context.js";
 
 interface ApiResult {
   ok: boolean;
@@ -20,17 +17,15 @@ export async function atomsApi(
   body?: unknown,
   extraHeaders?: Record<string, string>
 ): Promise<ApiResult> {
-  if (!ATOMS_API_KEY) {
-    throw new Error("ATOMS_API_KEY environment variable is required");
-  }
+  const { apiKey, apiUrl } = requireContext();
 
   // Ensure org is resolved (validates the API key on first call)
   await getAuthenticatedOrg();
 
-  const url = `${ATOMS_API_URL}${path}`;
+  const url = `${apiUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${ATOMS_API_KEY}`,
+    Authorization: `Bearer ${apiKey}`,
     ...extraHeaders,
   };
 

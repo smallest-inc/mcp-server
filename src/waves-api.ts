@@ -1,5 +1,8 @@
+import { requireContext } from "./context.js";
+
+// TODO: move to the request context alongside apiUrl when the base URLs are
+// made configurable — this one is still pinned to prod.
 const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
-const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface WavesApiResult {
   ok: boolean;
@@ -23,10 +26,7 @@ export async function wavesApi(
   };
 
   if (options?.auth) {
-    if (!ATOMS_API_KEY) {
-      throw new Error("ATOMS_API_KEY environment variable is required for authenticated Waves API calls");
-    }
-    headers.Authorization = `Bearer ${ATOMS_API_KEY}`;
+    headers.Authorization = `Bearer ${requireContext().apiKey}`;
   }
 
   const init: RequestInit = { method, headers };
