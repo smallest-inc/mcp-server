@@ -83,7 +83,7 @@ async function handleMcpRequest(
     { name: "smallest", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
   );
-  registerTools(server);
+  registerTools(server, { localFilesystem: false });
   registerResources(server);
 
   // Nothing in the tool surface streams, so plain JSON replies: one body per
