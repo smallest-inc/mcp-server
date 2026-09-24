@@ -27,6 +27,11 @@ FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
+# The bundle is ESM. Without this the file only runs because Node >= 22.7
+# auto-detects module syntax — pin the base to node:20-alpine, which the
+# declared engines range allows, and every pod crash-loops at startup.
+RUN printf '{"type":"module"}' > package.json
+
 # node:22-alpine ships an unprivileged `node` user; use it rather than root.
 COPY --from=builder --chown=node:node /app/dist/http.js ./http.js
 

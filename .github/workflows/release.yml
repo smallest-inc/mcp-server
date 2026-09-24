@@ -6,7 +6,10 @@ on:
     paths-ignore:
       - "*.md"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/deploy.yml"
       - ".github/CODEOWNERS"
+      - "Dockerfile"
+      - ".dockerignore"
 
 permissions:
   contents: write
