@@ -19,7 +19,10 @@ export function registerDebugCall(server: McpServer) {
       // Fetch both the MongoDB call log (rich metadata) and ClickHouse events in parallel
       const [logsResult, eventsResult] = await Promise.all([
         atomsApi("GET", `/conversation/${encodeURIComponent(params.call_id)}`),
-        atomsApi("GET", `/analytics/conversation-details/${encodeURIComponent(params.call_id)}`),
+        atomsApi(
+          "GET",
+          `/analytics/conversation-details/${encodeURIComponent(params.call_id)}?include_diagnostics=true`
+        ),
       ]);
 
       // If the conversation logs endpoint fails, fall back to events-only
