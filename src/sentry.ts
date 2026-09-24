@@ -106,6 +106,12 @@ function redactInner(
       out[safeKey] = redactInner(inner, depth + 1, seen, budget);
     }
     return out;
+  } catch {
+    // Anything hostile that the per-key guard did not cover: a throwing `stack`
+    // getter, a Proxy whose ownKeys trap throws, an object impersonating a Map.
+    // Sentry drops a throwing beforeSend silently, so without this a single
+    // malformed object loses the entire report rather than one field.
+    return "[redacted: unreadable]";
   } finally {
     seen.delete(value);
   }
