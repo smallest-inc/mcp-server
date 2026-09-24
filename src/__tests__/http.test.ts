@@ -26,6 +26,23 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
 
     const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
 
+    // Delay the FIRST of the tool's two sequential calls, so the second one
+    // reads the context after the other caller has established its own.
+    if (options.delayFor && url.includes("/agent/") && authorization?.includes(options.delayFor)) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+
+    // The account lookup is validated strictly, so it needs a real shape.
+    if (url.includes("/account/get-account-details")) {
+      const token = authorization?.replace("Bearer ", "") ?? "unknown";
+      upstream.push({ url, authorization });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ userId: `user-${token}`, organizations: [{ orgId: `org-${token}` }] }),
+      };
+    }
+
     if (url.includes("console.example/user/token")) {
       const status = options.consoleStatus ?? 200;
       const token = authorization?.replace("Bearer ", "") ?? "unknown";
@@ -44,12 +61,6 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
 
     upstream.push({ url, authorization });
 
-    // Hold one caller's upstream open so the other establishes its context
-    // while the first is still mid-flight.
-    if (options.delayFor && authorization?.includes(options.delayFor)) {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-
     return { ok: true, status: 200, json: async () => ({ data: [] }) };
   });
 
@@ -67,6 +78,21 @@ async function rpc(body: unknown, headers: Record<string, string> = {}) {
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * get_agent_prompt makes two SEQUENTIAL upstream calls. atomsApi reads the
+ * context at the top of each call, so delaying the first means the second
+ * reads it again after the other caller has established its own — which is
+ * what makes a last-writer-wins context observable. A tool with a single call,
+ * or two parallel ones, reads the context before any interleaving can happen
+ * and would pass even with no isolation at all.
+ */
+const CALL_GET_AGENT_PROMPT = {
+  jsonrpc: "2.0",
+  id: 7,
+  method: "tools/call",
+  params: { name: "get_agent_prompt", arguments: { agent_id: "agent-1" } },
+};
 
 const CALL_GET_AGENTS = {
   jsonrpc: "2.0",
@@ -162,16 +188,27 @@ describe("hosted HTTP transport", () => {
   it("keeps two concurrent callers' credentials apart", async () => {
     const upstream = stubUpstreams({ delayFor: "sk_AAA" });
 
-    await Promise.all([
-      rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_AAA" }),
-      rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_BBB" }),
+    // Read both bodies to completion: fetch resolves when the SSE headers
+    // arrive, so asserting before that would race the delayed caller.
+    const responses = await Promise.all([
+      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_AAA" }),
+      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_BBB" }),
     ]);
+    await Promise.all(responses.map((r) => r.text()));
 
     // The whole reason the credentials moved out of module scope.
-    const keys = new Set(upstream.map((c) => c.authorization));
-    expect(keys).toEqual(new Set(["Bearer sk_AAA", "Bearer sk_BBB"]));
-    expect(upstream.filter((c) => c.authorization === "Bearer sk_AAA").length).toBeGreaterThan(0);
-    expect(upstream.filter((c) => c.authorization === "Bearer sk_BBB").length).toBeGreaterThan(0);
+    // Every /agent call must carry the key of the caller that asked for it. The
+    // delayed caller's header is constructed after the other one ran, so a
+    // last-writer-wins context would hand it the wrong key here.
+    // Group every upstream call by the key it carried. Each caller must appear
+    // with its own key and only its own.
+    const byKey = new Map<string | undefined, number>();
+    for (const call of upstream) byKey.set(call.authorization, (byKey.get(call.authorization) ?? 0) + 1);
+
+    expect([...byKey.keys()].sort()).toEqual(["Bearer sk_AAA", "Bearer sk_BBB"]);
+    // Both callers ran the same tool, so both must have made the same number of
+    // upstream calls. A leaked context shows up as a lopsided split.
+    expect(byKey.get("Bearer sk_AAA")).toBe(byKey.get("Bearer sk_BBB"));
   });
 
   it("answers a malformed body in JSON-RPC, without a stack trace", async () => {
