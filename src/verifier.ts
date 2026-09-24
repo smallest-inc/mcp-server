@@ -42,8 +42,13 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
       if (!result.ok) {
         if (result.unavailable) {
           // 500, not 401. A console outage must not tell every user their key
-          // is invalid — they would rotate keys that were fine.
-          throw new ServerError(`Could not verify the API key: ${result.error}`);
+          // is invalid — they would rotate keys that were fine. The detail stays
+          // in the log: OAuthError.toResponseObject puts `message` into the
+          // response body, and result.error can name internal hosts.
+          console.error(
+            JSON.stringify({ event: "mcp_key_verification_unavailable", error: result.error })
+          );
+          throw new ServerError("Could not verify the API key right now");
         }
         throw new InvalidTokenError(
           "Invalid or revoked API key. Check your key in the Atoms console (Settings > API Keys)."
@@ -56,8 +61,10 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
         clientId: `atoms-api-key:${result.value.organizationId}`,
         scopes: [API_KEY_SCOPE],
         expiresAt: Math.floor(Date.now() / 1000) + VALIDATION_TTL_SECONDS,
+        // Deliberately no copy of the key here: AuthInfo.token already carries
+        // it, and `extra` is the part most likely to be serialised whole by a
+        // logger or error reporter. Consumers read authInfo.token.
         extra: {
-          apiKey: token,
           orgId: result.value.organizationId,
           userId: result.value.userId,
         },

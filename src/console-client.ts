@@ -10,6 +10,8 @@
  * replacement.
  */
 
+import { z } from "zod";
+
 export interface ValidatedKey {
   organizationId: string;
   userId: string;
@@ -25,8 +27,19 @@ const CONSOLE_TIMEOUT_MS = 5_000;
 export interface ConsoleConfig {
   url: string;
   /** Service credential for console, sent as X-API-Key. Never a user's key. */
-  apiKey: string;
+  serviceApiKey: string;
 }
+
+/**
+ * Fields are required and must be non-empty strings. Truthiness alone is not
+ * enough: an object or array here would coerce to something like
+ * "[object Object]" and silently collapse distinct tenants onto one identity.
+ */
+const ConsoleUserResponse = z.object({
+  success: z.boolean(),
+  organizationId: z.string().min(1),
+  data: z.object({ _id: z.string().min(1) }),
+});
 
 /**
  * Read at call time rather than at import. Module-level env capture is the bug
@@ -35,9 +48,9 @@ export interface ConsoleConfig {
  */
 export function consoleConfigFromEnv(): ConsoleConfig | null {
   const url = process.env.CONSOLE_BACKEND_URL;
-  const apiKey = process.env.CONSOLE_API_KEY;
-  if (!url || !apiKey) return null;
-  return { url: url.replace(/\/+$/, ""), apiKey };
+  const serviceApiKey = process.env.CONSOLE_API_KEY;
+  if (!url || !serviceApiKey) return null;
+  return { url: url.replace(/\/+$/, ""), serviceApiKey };
 }
 
 /**
@@ -48,18 +61,27 @@ export function consoleConfigFromEnv(): ConsoleConfig | null {
  * and they would rotate perfectly good keys.
  */
 export async function validateApiKey(
-  apiKey: string,
+  userApiKey: string,
   config: ConsoleConfig
 ): Promise<ValidationResult> {
+  const base = config.url.replace(/\/+$/, "");
+
   let response: Response;
   try {
-    response = await fetch(`${config.url}/user/token`, {
+    response = await fetch(`${base}/user/token`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
-        "X-API-Key": config.apiKey,
-        Authorization: `Bearer ${apiKey}`,
+        // The service credential identifies us to console; the bearer token is
+        // the caller's. Distinct names on purpose — swapping them would present
+        // the service key as a user token, which console might well resolve.
+        "X-API-Key": config.serviceApiKey,
+        Authorization: `Bearer ${userApiKey}`,
       },
+      // Never follow a redirect. Authorization is dropped cross-origin but
+      // custom headers are not, so a 302 would replay the shared service key to
+      // whatever host console points at.
+      redirect: "manual",
       signal: AbortSignal.timeout(CONSOLE_TIMEOUT_MS),
     });
   } catch (error) {
@@ -71,15 +93,20 @@ export async function validateApiKey(
     };
   }
 
+  // Only a 401 is console telling us the caller's key is bad. A 403 or 404 is
+  // far more likely to be OUR problem — a rotated service key, a wrong
+  // CONSOLE_BACKEND_URL, a stale route — and answering those with "your key is
+  // revoked" would have every user rotating perfectly good keys during an
+  // outage. A 3xx lands here too, since redirects are not followed.
   if (!response.ok) {
     return {
       ok: false,
-      unavailable: response.status === 429 || response.status >= 500,
+      unavailable: response.status !== 401,
       error: `console returned ${response.status}`,
     };
   }
 
-  let body: any;
+  let body: unknown;
   try {
     body = await response.json();
   } catch {
@@ -87,13 +114,20 @@ export async function validateApiKey(
   }
 
   // Console's shape is { success, data: <user>, organizationId } — the key's
-  // owning user id is data._id (console user.controller).
-  const organizationId = body?.organizationId;
-  const userId = body?.data?._id;
-
-  if (!body?.success || !organizationId || !userId) {
-    return { ok: false, unavailable: false, error: "console did not resolve the key to an organization" };
+  // owning user id is data._id (console user.controller). A 200 we cannot parse
+  // into that shape is an infrastructure fault, not a credential decision, so
+  // it must not surface as "your key is invalid".
+  const parsed = ConsoleUserResponse.safeParse(body);
+  if (!parsed.success) {
+    return { ok: false, unavailable: true, error: "console returned an unrecognised body" };
   }
 
-  return { ok: true, value: { organizationId: String(organizationId), userId: String(userId) } };
+  if (!parsed.data.success) {
+    return { ok: false, unavailable: false, error: "console did not accept the key" };
+  }
+
+  return {
+    ok: true,
+    value: { organizationId: parsed.data.organizationId, userId: parsed.data.data._id },
+  };
 }

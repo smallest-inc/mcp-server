@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleConfig } from "../console-client.js";
 import { API_KEY_SCOPE, createApiKeyVerifier } from "../verifier.js";
 
-const CONFIG: ConsoleConfig = { url: "https://console.example", apiKey: "service-key" };
+const CONFIG: ConsoleConfig = { url: "https://console.example", serviceApiKey: "service-key" };
 
 function stubConsole(response: { status?: number; body?: unknown } | { reject: Error }) {
-  const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+  const calls: Array<{ url: string; headers: Record<string, string>; redirect?: string }> = [];
 
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-    calls.push({ url, headers: init.headers as Record<string, string> });
+    calls.push({ url, headers: init.headers as Record<string, string>, redirect: init.redirect });
     if ("reject" in response) throw response.reject;
     const status = response.status ?? 200;
     return {
@@ -36,7 +36,10 @@ describe("API key verifier", () => {
 
     const auth = await createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live");
 
-    expect(auth.extra).toMatchObject({ apiKey: "sk_live", orgId: "org-1", userId: "user-1" });
+    expect(auth.token).toBe("sk_live");
+    expect(auth.extra).toEqual({ orgId: "org-1", userId: "user-1" });
+    // The key must not be duplicated into `extra`, which loggers serialise whole.
+    expect(JSON.stringify(auth.extra)).not.toContain("sk_live");
     expect(auth.scopes).toEqual([API_KEY_SCOPE]);
     expect(calls[0].url).toBe("https://console.example/user/token");
     // The user's key authenticates the user; the service key authenticates us.
@@ -78,12 +81,55 @@ describe("API key verifier", () => {
     await expect(verify).rejects.not.toBeInstanceOf(InvalidTokenError);
   });
 
-  it("treats a success body with no organization as a bad key", async () => {
-    stubConsole({ body: { success: true, data: { _id: "user-1" } } });
+  it("rejects the key only when console explicitly says so", async () => {
+    stubConsole({ body: { success: false, organizationId: "org-1", data: { _id: "user-1" } } });
 
     await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
       InvalidTokenError
     );
+  });
+
+  it.each([
+    ["a 403, most likely our own service key", { status: 403 } as const],
+    ["a 404 from a wrong CONSOLE_BACKEND_URL", { status: 404 } as const],
+    ["a 400", { status: 400 } as const],
+    ["a 302, since redirects are not followed", { status: 302 } as const],
+  ])("does not blame the caller's key for %s", async (_label, response) => {
+    stubConsole(response as any);
+
+    // Answering these with 401 would have every user rotating a working key
+    // because someone rotated the service credential or moved a route.
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+      ServerError
+    );
+  });
+
+  it.each([
+    ["a null body", null],
+    ["a body missing organizationId", { success: true, data: { _id: "user-1" } }],
+    ["a non-string organizationId", { success: true, organizationId: {}, data: { _id: "u" } }],
+    ["an empty organizationId", { success: true, organizationId: "", data: { _id: "u" } }],
+    ["a body missing the user id", { success: true, organizationId: "org-1", data: {} }],
+  ])("treats %s as an infrastructure fault, not a bad key", async (_label, body) => {
+    stubConsole({ body });
+
+    // A non-string id would coerce to something like "[object Object]" and
+    // collapse distinct tenants onto one identity, so it must fail closed.
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+      ServerError
+    );
+  });
+
+  it("does not follow redirects, and does not leak the service key in errors", async () => {
+    const calls = stubConsole({ status: 500 });
+
+    await expect(
+      createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")
+    ).rejects.toThrow(/Could not verify the API key right now/);
+
+    // The message reaches the client verbatim via error_description, so it must
+    // not carry internal hostnames or the upstream status detail.
+    expect(calls[0].redirect).toBe("manual");
   });
 
   it("fails as a server error when console credentials are unset, without calling out", async () => {
