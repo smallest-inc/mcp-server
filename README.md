@@ -123,6 +123,12 @@ Edits are saved to a branch's **draft** (agents use the branch/revision model). 
 | Variable | Required | Description |
 |---|---|---|
 | `ATOMS_API_KEY` | Yes | Your Smallest AI API key |
+| `ATOMS_API_URL` | No | Atoms API base. Defaults to `https://api.smallest.ai/atoms/v1`. The realtime chat WebSocket base is derived from it. |
+| `WAVES_API_URL` | No | Waves API base. Defaults to `https://api.smallest.ai/waves/v1`. |
+| `PAYMENTS_API_URL` | No | Payments API base. Defaults to `https://api.smallest.ai/payment/v1`. |
+
+Only `ATOMS_API_KEY` is needed for normal use. The three base URLs exist so the
+server can be pointed at a non-production environment.
 
 ## Development
 
