@@ -1,8 +1,8 @@
 import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConsoleConfig } from "../console-client.js";
-import { API_KEY_SCOPE, createApiKeyVerifier } from "../verifier.js";
+import { API_KEY_SCOPE, clearValidationCache, createApiKeyVerifier } from "../verifier.js";
 
 const CONFIG: ConsoleConfig = { url: "https://console.example", serviceApiKey: "service-key" };
 
@@ -25,9 +25,12 @@ function stubConsole(response: { status?: number; body?: unknown } | { reject: E
 
 const OK_BODY = { success: true, organizationId: "org-1", data: { _id: "user-1" } };
 
+beforeEach(() => clearValidationCache());
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  clearValidationCache();
 });
 
 describe("API key verifier", () => {
@@ -59,7 +62,7 @@ describe("API key verifier", () => {
   });
 
   it("rejects a bad key as an invalid token", async () => {
-    stubConsole({ status: 401 });
+    stubConsole({ status: 401, body: { success: false, error: "invalid key" } });
 
     await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_bad")).rejects.toBeInstanceOf(
       InvalidTokenError
@@ -90,7 +93,7 @@ describe("API key verifier", () => {
   });
 
   it.each([
-    ["a 403, most likely our own service key", { status: 403 } as const],
+    ["a 403 with no console body, most likely our own service key", { status: 403 } as const],
     ["a 404 from a wrong CONSOLE_BACKEND_URL", { status: 404 } as const],
     ["a 400", { status: 400 } as const],
     ["a 302, since redirects are not followed", { status: 302 } as const],
@@ -120,15 +123,50 @@ describe("API key verifier", () => {
     );
   });
 
+  it("validates once for repeated requests with the same key", async () => {
+    const calls = stubConsole({ body: OK_BODY });
+    const verifier = createApiKeyVerifier(CONFIG);
+
+    await verifier.verifyAccessToken("sk_live");
+    await verifier.verifyAccessToken("sk_live");
+    await Promise.all([verifier.verifyAccessToken("sk_live"), verifier.verifyAccessToken("sk_live")]);
+
+    // requireBearerAuth runs the verifier on every request, so without a cache
+    // every tool call is a console round trip.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not cache a rejection", async () => {
+    stubConsole({ status: 401, body: { success: false } });
+    const verifier = createApiKeyVerifier(CONFIG);
+    await expect(verifier.verifyAccessToken("sk_live")).rejects.toBeInstanceOf(InvalidTokenError);
+
+    const calls = stubConsole({ body: OK_BODY });
+    await expect(verifier.verifyAccessToken("sk_live")).resolves.toMatchObject({ token: "sk_live" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("treats a 401 without console's body shape as our problem, not the caller's", async () => {
+    // A gateway or middleware rejecting OUR service key answers 401 too. Reading
+    // that as a revoked customer key is the outage this whole path exists to
+    // avoid, so the body has to break the tie.
+    stubConsole({ status: 401, body: { message: "invalid api key" } });
+
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+      ServerError
+    );
+  });
+
   it("does not follow redirects, and does not leak the service key in errors", async () => {
     const calls = stubConsole({ status: 500 });
 
-    await expect(
-      createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")
-    ).rejects.toThrow(/Could not verify the API key right now/);
+    const error = await createApiKeyVerifier(CONFIG)
+      .verifyAccessToken("sk_live")
+      .catch((e) => e as Error);
 
-    // The message reaches the client verbatim via error_description, so it must
-    // not carry internal hostnames or the upstream status detail.
+    // The message reaches the client verbatim via error_description, so assert
+    // the exact string — a substring match would pass with a hostname appended.
+    expect(error.message).toBe("Could not verify the API key right now");
     expect(calls[0].redirect).toBe("manual");
   });
 
