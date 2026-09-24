@@ -325,6 +325,40 @@ describe("request-scoped credentials", () => {
     expect(contextFromEnv()?.wavesUrl).toBe("https://a.example/waves/v1");
   });
 
+  it("reaches a public Waves endpoint with no context at all", async () => {
+    const captured = stubFetch();
+
+    // get_voices is documented as public. Demanding a credential here broke it
+    // for anyone evaluating the server before pasting a key.
+    await wavesApi("GET", "/voice/get-all-models");
+
+    const call = captured.find((c) => c.url.includes("/voice/get-all-models"));
+    expect(call?.url).toBe("https://api.smallest.ai/waves/v1/voice/get-all-models");
+    expect(call?.authorization).toBeUndefined();
+  });
+
+  it("still requires a key for an authenticated Waves call", async () => {
+    stubFetch();
+
+    await expect(wavesApi("GET", "/voice", { auth: true })).rejects.toThrow(/ATOMS_API_KEY/);
+  });
+
+  it("defaults to the previously hardcoded production bases", () => {
+    vi.stubEnv("ATOMS_API_KEY", "key-a");
+    vi.stubEnv("ATOMS_API_URL", "");
+    vi.stubEnv("WAVES_API_URL", "");
+    vi.stubEnv("PAYMENTS_API_URL", "");
+
+    // Existing stdio users set none of these, so the defaults must equal the
+    // constants this PR deleted or their traffic silently moves.
+    expect(contextFromEnv()).toEqual({
+      apiKey: "key-a",
+      apiUrl: "https://api.smallest.ai/atoms/v1",
+      wavesUrl: "https://api.smallest.ai/waves/v1",
+      paymentsUrl: "https://api.smallest.ai/payment/v1",
+    });
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });

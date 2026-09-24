@@ -45,6 +45,16 @@ export function runWithContext<T>(context: RequestContext, fn: () => T): T {
 }
 
 /**
+ * The calling context, or null when nothing established one.
+ *
+ * For the handful of upstream endpoints that are public: they still need a base
+ * URL, but must not demand a credential the caller may not have.
+ */
+export function optionalContext(): RequestContext | null {
+  return store.getStore() ?? processDefault;
+}
+
+/**
  * The calling context. Throws if nothing established one — which for the stdio
  * server means ATOMS_API_KEY was unset.
  */
