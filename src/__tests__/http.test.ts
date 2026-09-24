@@ -354,6 +354,65 @@ describe("hosted HTTP transport", () => {
 
 
 
+  it("rejects a local path, and says what to use instead", async () => {
+    stubUpstreams();
+
+    const res = await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "transcribe_audio", arguments: { file_path: "~/Desktop/rec.wav", language: "en" } },
+      },
+      { Authorization: "Bearer sk_live" }
+    );
+    const body = await res.text();
+
+    expect(body).toContain("audio_url");
+    expect(body).toContain("isError");
+  });
+
+  it("honours audio_url even when a file_path is also supplied", async () => {
+    const upstream = stubUpstreams();
+
+    await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "transcribe_audio",
+          arguments: {
+            file_path: "~/Desktop/rec.wav",
+            audio_url: "https://cdn.example/a.wav",
+            language: "en",
+          },
+        },
+      },
+      { Authorization: "Bearer sk_live" }
+    );
+
+    // Locally the URL wins and the path is ignored; hosted should behave the
+    // same rather than hard-failing on a request it can serve.
+    expect(upstream.some((c) => c.url.includes("/pulse/get_text"))).toBe(true);
+  });
+
+  it("advertises no local file path on the hosted transport", async () => {
+    stubUpstreams();
+
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 5, method: "tools/list", params: {} },
+      { Authorization: "Bearer sk_live" }
+    );
+    const tools = JSON.parse((await res.text()).replace(/^.*?data: /s, "")).result.tools;
+    const transcribe = tools.find((t: { name: string }) => t.name === "transcribe_audio");
+
+    // The advertised contract must match the runtime one, or the model sends a
+    // path the server will always reject.
+    expect(transcribe.description).not.toMatch(/on the user's machine/);
+    expect(transcribe.description).toContain("audio_url");
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 
