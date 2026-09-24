@@ -8,3 +8,7 @@ test-mcp.ts
 install.sh
 install.ps1
 src/__tests__
+.env
+.env.*
+.npmrc
+*.tgz
