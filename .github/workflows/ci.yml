@@ -36,8 +36,9 @@ jobs:
             node smoke.mjs
 
       # The hosted bundle ships as a single file with no node_modules. Running it
-      # from an empty directory is what catches a missing "type": "module" or a
-      # dependency esbuild failed to inline.
+      # from an empty directory catches a dependency esbuild failed to inline.
+      # It does NOT guard the Dockerfile — it writes its own package.json — so
+      # the image is built and run separately below.
       - name: hosted bundle runs standalone
         run: |
           set -euo pipefail
@@ -53,3 +54,30 @@ jobs:
           curl -fsS http://127.0.0.1:8099/health/live
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8099/mcp)" = "401"
           kill %1
+
+  # The bundle check above writes its own {"type":"module"}, so it cannot catch
+  # the image forgetting to. Build and run the real image instead: without that
+  # line the container fails at startup on any base older than node 22.7.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mcp-server:ci .
+
+      - name: The image actually serves
+        run: |
+          set -euo pipefail
+          docker run -d --name mcp-ci -p 8092:8092 \
+            -e CONSOLE_BACKEND_URL=https://console.invalid \
+            -e CONSOLE_API_KEY=ci \
+            mcp-server:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8092/health/live >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8092/health/live
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8092/mcp)" = "401"
+          docker logs mcp-ci
+          docker rm -f mcp-ci
