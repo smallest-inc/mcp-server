@@ -157,6 +157,21 @@ describe("API key verifier", () => {
     );
   });
 
+  it.each([
+    ["a null success field", { success: null }],
+    ["a string success field", { success: "nope" }],
+    ["an array body", ["nope"]],
+  ])("does not read %s as console's own verdict", async (_label, body) => {
+    stubConsole({ status: 401, body });
+
+    // Only console answers with a boolean `success`. Anything else at 401 is
+    // most likely our service credential, and blaming the caller for that is
+    // the outage this whole path exists to avoid.
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+      ServerError
+    );
+  });
+
   it("does not follow redirects, and does not leak the service key in errors", async () => {
     const calls = stubConsole({ status: 500 });
 
