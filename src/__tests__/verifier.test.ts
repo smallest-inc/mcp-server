@@ -162,7 +162,7 @@ describe("API key verifier", () => {
 
     const error = await createApiKeyVerifier(CONFIG)
       .verifyAccessToken("sk_live")
-      .catch((e) => e as Error);
+      .then(() => new Error("expected a rejection"), (e) => e as Error);
 
     // The message reaches the client verbatim via error_description, so assert
     // the exact string — a substring match would pass with a hostname appended.
