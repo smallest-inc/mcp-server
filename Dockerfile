@@ -41,4 +41,9 @@ ENV NODE_ENV=production
 ENV PORT=8092
 EXPOSE 8092
 
-CMD ["node", "http.js"]
+# --no-experimental-detect-module on purpose: without it Node >= 22.7 infers ESM
+# from the syntax, so the package.json above would be decorative and a base
+# image downgrade — which engines ">=18" permits — would be the thing that
+# breaks, far from this file. With the flag, the declaration is load-bearing
+# here and in CI.
+CMD ["node", "--no-experimental-detect-module", "http.js"]
