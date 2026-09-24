@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { z } from "zod";
+
 import { requireContext } from "./context.js";
 
 interface AuthenticatedOrg {
@@ -69,13 +71,6 @@ function writeCache(key: string, org: AuthenticatedOrg): void {
     if (entry.expiresAt <= now) orgCache.delete(k);
   }
 
-  // Rewriting a key already present does not grow the map, so nothing needs to
-  // be evicted for it.
-  if (orgCache.has(key)) {
-    orgCache.set(key, { org, expiresAt: now + ORG_CACHE_TTL_MS });
-    return;
-  }
-
   // Map iterates in insertion order, so the first key is the oldest write.
   while (orgCache.size >= ORG_CACHE_MAX_ENTRIES) {
     const oldest = orgCache.keys().next();
@@ -92,6 +87,17 @@ function writeCache(key: string, org: AuthenticatedOrg): void {
  * Entries are removed as soon as they settle; failures are never cached.
  */
 const inFlight = new Map<string, Promise<AuthenticatedOrg>>();
+
+/**
+ * Fields must be present and non-empty. Truthiness alone would let an object or
+ * a number through String() as "[object Object]" or "1234" and cache it as a
+ * real organization — which then rides on every payments call as
+ * X-Organization-Id. Same reasoning as the console client's parser.
+ */
+const AccountResponse = z.object({
+  userId: z.string().min(1),
+  organizations: z.array(z.object({ orgId: z.string().min(1) })).min(1),
+});
 
 /** Test seam: drop all cached organizations and in-flight lookups. */
 export function clearOrgCache(): void {
@@ -143,11 +149,15 @@ async function resolveOrg(apiKey: string, apiUrl: string): Promise<Authenticated
       signal: AbortSignal.timeout(ACCOUNT_LOOKUP_TIMEOUT_MS),
     });
   } catch (error) {
-    throw new Error(
-      `Could not reach the Atoms API to verify the API key: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+    // Detail to the log, not to the caller: in a hosted process this message
+    // reaches the client and the fetch error names internal hosts.
+    console.error(
+      JSON.stringify({
+        event: "atoms_account_lookup_unreachable",
+        error: error instanceof Error ? error.message : String(error),
+      })
     );
+    throw new Error("Could not reach the Atoms API to verify the API key");
   }
 
   let data: any;
@@ -164,17 +174,23 @@ async function resolveOrg(apiKey: string, apiUrl: string): Promise<Authenticated
           "Check your API key in the Atoms console (Settings > API Keys)."
       );
     }
-    throw new Error(`Failed to verify API key: ${response.status} ${JSON.stringify(data)}`);
+    console.error(
+      JSON.stringify({
+        event: "atoms_account_lookup_failed",
+        status: response.status,
+        body: JSON.stringify(data)?.slice(0, 500),
+      })
+    );
+    throw new Error(`Failed to verify API key: ${response.status}`);
   }
 
-  const orgs = data?.organizations;
-
-  if (!orgs || orgs.length === 0) {
+  const parsed = AccountResponse.safeParse(data);
+  if (!parsed.success) {
     throw new Error("No organizations found for this API key.");
   }
 
   return {
-    orgId: orgs[0].orgId,
-    userId: data.userId,
+    orgId: parsed.data.organizations[0].orgId,
+    userId: parsed.data.userId,
   };
 }
