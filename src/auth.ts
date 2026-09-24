@@ -186,7 +186,17 @@ async function resolveOrg(apiKey: string, apiUrl: string): Promise<Authenticated
 
   const parsed = AccountResponse.safeParse(data);
   if (!parsed.success) {
-    throw new Error("No organizations found for this API key.");
+    // A 200 we cannot read is an infrastructure fault, not a verdict on the
+    // key — the same distinction the console client draws. Saying "no
+    // organizations" here would send users off rotating a working credential
+    // because main-backend changed a field type.
+    console.error(
+      JSON.stringify({
+        event: "atoms_account_lookup_unreadable",
+        issues: parsed.error.issues.map((i) => i.path.join(".")).join(","),
+      })
+    );
+    throw new Error("Could not read the account details response");
   }
 
   return {

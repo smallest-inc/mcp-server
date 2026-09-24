@@ -229,14 +229,14 @@ describe("request-scoped credentials", () => {
     ["an empty organizations array", { userId: "u", organizations: [] }],
     ["a non-string orgId", { userId: "u", organizations: [{ orgId: {} }] }],
     ["a missing userId", { organizations: [{ orgId: "org-1" }] }],
-  ])("refuses to cache an account response with %s", async (_label, body) => {
+  ])("treats an unreadable account response as a fault, not a bad key", async (_label, body) => {
     vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => body }));
 
     // A non-string id would coerce to "[object Object]" and ride on every
     // payments call as X-Organization-Id.
     await expect(
       runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
-    ).rejects.toThrow(/No organizations found/);
+    ).rejects.toThrow(/Could not read the account details/);
   });
 
   it("keeps upstream detail out of the error the caller sees", async () => {
