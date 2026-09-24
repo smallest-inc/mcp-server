@@ -22,6 +22,17 @@ const ORG_CACHE_TTL_MS = 5 * 60 * 1000;
 const ORG_CACHE_MAX_ENTRIES = 1_000;
 
 /**
+ * Hard cap on the account lookup.
+ *
+ * Without it a backend that accepts the connection and never answers wedges the
+ * key permanently: the in-flight promise below never settles, so every later
+ * caller presenting that key coalesces onto the same hang and nothing clears it
+ * short of a restart. Coalescing turns one slow request into a per-tenant
+ * deadlock unless the lookup is bounded.
+ */
+const ACCOUNT_LOOKUP_TIMEOUT_MS = 10_000;
+
+/**
  * Keyed by a hash of the API key, never the key itself — a heap dump or a log
  * of this map must not hand out credentials. One entry per caller, because a
  * single shared entry (what this replaces) would serve one tenant's
@@ -56,6 +67,13 @@ function writeCache(key: string, org: AuthenticatedOrg): void {
   const now = Date.now();
   for (const [k, entry] of orgCache) {
     if (entry.expiresAt <= now) orgCache.delete(k);
+  }
+
+  // Rewriting a key already present does not grow the map, so nothing needs to
+  // be evicted for it.
+  if (orgCache.has(key)) {
+    orgCache.set(key, { org, expiresAt: now + ORG_CACHE_TTL_MS });
+    return;
   }
 
   // Map iterates in insertion order, so the first key is the oldest write.
@@ -114,13 +132,23 @@ export async function getAuthenticatedOrg(): Promise<AuthenticatedOrg> {
 }
 
 async function resolveOrg(apiKey: string, apiUrl: string): Promise<AuthenticatedOrg> {
-  const response = await fetch(`${apiUrl}/account/get-account-details`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiUrl}/account/get-account-details`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: AbortSignal.timeout(ACCOUNT_LOOKUP_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not reach the Atoms API to verify the API key: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 
   let data: any;
   try {

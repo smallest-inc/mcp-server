@@ -156,6 +156,74 @@ describe("request-scoped credentials", () => {
     expect(prod.orgId).toBe("org-for-same-key");
   });
 
+  it("never caches a failed lookup, and lets the next caller retry", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) return { ok: false, status: 500, json: async () => ({ message: "boom" }) };
+      return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "org-1" }] }) };
+    });
+
+    const run = () =>
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+        getAuthenticatedOrg()
+      );
+
+    await expect(run()).rejects.toThrow(/Failed to verify API key/);
+    // A failure must not poison the cache, nor leave the in-flight entry behind.
+    await expect(run()).resolves.toMatchObject({ orgId: "org-1" });
+    expect(calls).toBe(2);
+  });
+
+  it("bounds the account lookup so a hung backend cannot wedge a key", async () => {
+    // A hung lookup used to be shared by every later caller for that key and
+    // never cleared, so one slow backend deadlocked the tenant until restart.
+    // The abort is simulated rather than waited out; what matters is that a
+    // signal is attached and that an abort surfaces as a clean rejection.
+    const signals: Array<AbortSignal | undefined | null> = [];
+    let calls = 0;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      signals.push(init.signal);
+      calls += 1;
+      if (calls === 1) throw new DOMException("The operation was aborted", "TimeoutError");
+      return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "org-1" }] }) };
+    });
+
+    const run = () =>
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+        getAuthenticatedOrg()
+      );
+
+    await expect(run()).rejects.toThrow(/Could not reach the Atoms API/);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+
+    // The hung attempt left nothing behind, so the next caller gets through.
+    await expect(run()).resolves.toMatchObject({ orgId: "org-1" });
+  });
+
+  it("evicts the oldest entry rather than growing without bound", async () => {
+    stubFetch();
+
+    // One more than the 1000-entry bound.
+    for (let i = 0; i < 1001; i += 1) {
+      await runWithContext({ apiKey: `key-${i}`, apiUrl: "https://a.example/atoms/v1" }, () =>
+        getAuthenticatedOrg()
+      );
+    }
+
+    const captured = stubFetch();
+    // key-0 was evicted, so it resolves again; the most recent key is still cached.
+    await runWithContext({ apiKey: "key-1000", apiUrl: "https://a.example/atoms/v1" }, () =>
+      getAuthenticatedOrg()
+    );
+    expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(0);
+
+    await runWithContext({ apiKey: "key-0", apiUrl: "https://a.example/atoms/v1" }, () =>
+      getAuthenticatedOrg()
+    );
+    expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(1);
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });
