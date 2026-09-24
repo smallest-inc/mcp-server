@@ -1,4 +1,4 @@
-import { DEFAULT_WAVES_API_URL, optionalContext, requireContext } from "./context.js";
+import { basesFromEnv, optionalContext, requireContext } from "./context.js";
 
 interface WavesApiResult {
   ok: boolean;
@@ -18,7 +18,7 @@ export async function wavesApi(
   // Some endpoints here are public (voice listing), so the base URL is read
   // without demanding a credential — requiring one unconditionally would break
   // get_voices for anyone who has not configured a key yet.
-  const url = `${optionalContext()?.wavesUrl ?? DEFAULT_WAVES_API_URL}${path}`;
+  const url = `${optionalContext()?.wavesUrl ?? basesFromEnv().wavesUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

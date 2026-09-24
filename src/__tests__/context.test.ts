@@ -337,6 +337,17 @@ describe("request-scoped credentials", () => {
     expect(call?.authorization).toBeUndefined();
   });
 
+  it("honours a configured Waves base even before a key is set", async () => {
+    vi.stubEnv("WAVES_API_URL", "https://staging.example/waves/v1");
+    const captured = stubFetch();
+
+    await wavesApi("GET", "/voice/get-all-models");
+
+    // contextFromEnv returns null with no key, which used to discard the
+    // operator's base and send the call to production instead.
+    expect(captured[0].url).toBe("https://staging.example/waves/v1/voice/get-all-models");
+  });
+
   it("still requires a key for an authenticated Waves call", async () => {
     stubFetch();
 

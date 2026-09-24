@@ -79,15 +79,26 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
-export function contextFromEnv(): RequestContext | null {
-  const apiKey = process.env.ATOMS_API_KEY;
-  if (!apiKey) return null;
+/**
+ * The configured upstream bases, with no credential attached.
+ *
+ * contextFromEnv returns null when ATOMS_API_KEY is unset, which is right for
+ * anything needing a credential — but it would also discard a configured
+ * WAVES_API_URL, so a public call made before a key is pasted would silently go
+ * to production instead of wherever the operator pointed it.
+ */
+export function basesFromEnv(): Omit<RequestContext, "apiKey"> {
   return {
-    apiKey,
-    // Trailing slashes are stripped because every caller appends a path that
-    // already starts with one — a base ending in "/" would produce "//agent".
     apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
     wavesUrl: stripTrailingSlash(process.env.WAVES_API_URL || DEFAULT_WAVES_API_URL),
     paymentsUrl: stripTrailingSlash(process.env.PAYMENTS_API_URL || DEFAULT_PAYMENTS_API_URL),
   };
+}
+
+export function contextFromEnv(): RequestContext | null {
+  const apiKey = process.env.ATOMS_API_KEY;
+  if (!apiKey) return null;
+  // Trailing slashes are stripped because every caller appends a path that
+  // already starts with one — a base ending in "/" would produce "//agent".
+  return { apiKey, ...basesFromEnv() };
 }
