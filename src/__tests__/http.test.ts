@@ -246,6 +246,65 @@ describe("hosted HTTP transport", () => {
     expect(res.status).toBe(401);
   });
 
+  it("answers a timed-out call instead of ending the stream silently", async () => {
+    vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "300");
+    // An upstream that never responds, and honours the abort so the test ends.
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }),
+        };
+      }
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live" });
+    const body = await res.text();
+
+    // Previously this ended the stream with nothing in it: the client saw a
+    // 200 with a zero-byte body and waited forever.
+    expect(body).toContain("-32001");
+    expect(body).toContain("too long");
+  });
+
+  it("answers every id in a batch when it times out", async () => {
+    vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "300");
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }),
+        };
+      }
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+
+    const res = await rpc(
+      [
+        { ...CALL_GET_AGENTS, id: 101 },
+        { ...CALL_GET_AGENTS, id: 102 },
+      ],
+      { Authorization: "Bearer sk_live" }
+    );
+    const body = await res.text();
+
+    // One frame with id null answers neither sub-request, so a client
+    // correlating by id hangs on both.
+    expect(body).toContain("101");
+    expect(body).toContain("102");
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

@@ -26,14 +26,18 @@ const HEADERS_TIMEOUT_MS = 251_000;
 
 /** Budget for in-flight tool calls to finish once SIGTERM arrives. Must stay under
  *  terminationGracePeriodSeconds minus preStopSleepSeconds. */
-const DRAIN_TIMEOUT_MS = Number(process.env.HTTP_DRAIN_TIMEOUT_MS ?? 185_000);
+function drainTimeoutMs(): number {
+  return Number(process.env.HTTP_DRAIN_TIMEOUT_MS ?? 185_000);
+}
 
 /**
  * Hard cap on one request. Sits below the drain budget so a deploy never has to
  * force-kill work, and bounds a tool that hangs upstream: SSE keep-alive frames
  * mean neither the ALB idle timeout nor keepAliveTimeout would ever reap it.
  */
-const REQUEST_TIMEOUT_MS = Number(process.env.MCP_REQUEST_TIMEOUT_MS ?? 180_000);
+function requestTimeoutMs(): number {
+  return Number(process.env.MCP_REQUEST_TIMEOUT_MS ?? 180_000);
+}
 
 /** Upstream bases shared by every request. Only the caller's key varies. */
 function upstreamsFromEnv() {
@@ -80,7 +84,7 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
   res.on("close", closeQuietly);
 
   const deadline = setTimeout(() => {
-    logEvent("mcp_request_timeout", { timeoutMs: REQUEST_TIMEOUT_MS });
+    logEvent("mcp_request_timeout", { timeoutMs: requestTimeoutMs() });
     // Stop the upstream work too. Without this the tool keeps running against
     // the Atoms API long after the caller has been answered.
     abort.abort(new Error("MCP request deadline exceeded"));
@@ -91,11 +95,11 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
       // The stream is already open, so ending it silently would leave the client
       // waiting on a response that can never arrive. Send a JSON-RPC error for
       // the request id first.
-      writeSseError(res, requestIdFrom(req.body), "The tool call took too long");
+      writeSseErrors(res, req.body, "The tool call took too long");
       res.end();
     }
     closeQuietly();
-  }, REQUEST_TIMEOUT_MS);
+  }, requestTimeoutMs());
 
   try {
     await server.connect(transport);
@@ -105,25 +109,36 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
   }
 }
 
-/** The id of a single JSON-RPC request, so a late error can be attributed. */
-function requestIdFrom(body: unknown): string | number | null {
-  if (body && typeof body === "object" && !Array.isArray(body)) {
-    const id = (body as { id?: unknown }).id;
-    if (typeof id === "string" || typeof id === "number") return id;
+/**
+ * Every id in the request, so a late error can be attributed to all of them. A
+ * batch carries several, and answering one null frame leaves a client
+ * correlating by id waiting on every sub-request it sent.
+ */
+function requestIdsFrom(body: unknown): Array<string | number | null> {
+  const idOf = (entry: unknown): string | number | null => {
+    if (entry && typeof entry === "object") {
+      const id = (entry as { id?: unknown }).id;
+      if (typeof id === "string" || typeof id === "number") return id;
+    }
+    return null;
+  };
+
+  if (Array.isArray(body)) {
+    const ids = body.map(idOf).filter((id) => id !== null);
+    return ids.length > 0 ? ids : [null];
   }
-  return null;
+  return [idOf(body)];
 }
 
-function writeSseError(res: Response, id: string | number | null, message: string): void {
-  try {
-    const frame = {
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32001, message },
-    };
-    res.write(`event: message\ndata: ${JSON.stringify(frame)}\n\n`);
-  } catch {
-    // The socket may already be gone; ending it is all that is left.
+function writeSseErrors(res: Response, body: unknown, message: string): void {
+  for (const id of requestIdsFrom(body)) {
+    try {
+      const frame = { jsonrpc: "2.0", id, error: { code: -32001, message } };
+      res.write(`event: message\ndata: ${JSON.stringify(frame)}\n\n`);
+    } catch {
+      // The socket may already be gone; ending it is all that is left.
+      return;
+    }
   }
 }
 
@@ -225,7 +240,7 @@ export function createApp() {
       } else if (!res.writableEnded) {
         // Headers are out, so the client is reading a stream that will never
         // finish. Close it rather than leaving the socket to keepAliveTimeout.
-        writeSseError(res, requestIdFrom(req.body), "Internal error");
+        writeSseErrors(res, req.body, "Internal error");
         res.end();
       }
     }
@@ -279,7 +294,7 @@ export function startServer(port: number): Server {
     const force = setTimeout(() => {
       console.error(JSON.stringify({ event: "mcp_http_shutdown_forced" }));
       process.exit(1);
-    }, DRAIN_TIMEOUT_MS);
+    }, drainTimeoutMs());
     force.unref();
 
     server.close(() => {
