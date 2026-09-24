@@ -1,10 +1,10 @@
+import { ATOMS_API_URL } from "./config.js";
+
 interface AuthenticatedOrg {
   orgId: string;
   userId: string;
 }
 
-// Overridable for non-prod environments — must match src/api.ts.
-const ATOMS_API_URL = process.env.ATOMS_API_URL || "https://api.smallest.ai/atoms/v1";
 const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 let cachedOrg: AuthenticatedOrg | null = null;

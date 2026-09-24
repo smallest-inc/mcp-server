@@ -2,8 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AtomsChatClient, ChatTurn } from "../chat-client.js";
-
-const ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
+import { ATOMS_API_URL } from "../config.js";
 
 /** Derive the realtime WebSocket base from the HTTP API base. */
 function wssBaseUrl(): string {
