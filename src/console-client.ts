@@ -58,9 +58,19 @@ export function consoleConfigFromEnv(): ConsoleConfig | null {
  * a gateway's? Console answers with { success, ... }; an edge rejection does not.
  */
 async function hasConsoleShape(response: Response): Promise<boolean> {
+  // Only ever called on the !response.ok path, which never reads the body
+  // again — a Response body can only be consumed once.
   try {
     const body = await response.json();
-    return typeof body === "object" && body !== null && "success" in body;
+    // A boolean specifically. `{success: null}` or `{success: "nope"}` from a
+    // gateway would otherwise be read as console's own verdict and blame the
+    // caller for what is most likely our service credential.
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      !Array.isArray(body) &&
+      typeof (body as { success?: unknown }).success === "boolean"
+    );
   } catch {
     return false;
   }
