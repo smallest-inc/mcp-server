@@ -54,6 +54,19 @@ export function consoleConfigFromEnv(): ConsoleConfig | null {
 }
 
 /**
+ * Does the error body look like console's own application response rather than
+ * a gateway's? Console answers with { success, ... }; an edge rejection does not.
+ */
+async function hasConsoleShape(response: Response): Promise<boolean> {
+  try {
+    const body = await response.json();
+    return typeof body === "object" && body !== null && "success" in body;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Exchange a user API key for its owning organization.
  *
  * Distinguishes a rejected credential from an unreachable console. Collapsing
@@ -93,15 +106,34 @@ export async function validateApiKey(
     };
   }
 
-  // Only a 401 is console telling us the caller's key is bad. A 403 or 404 is
-  // far more likely to be OUR problem — a rotated service key, a wrong
-  // CONSOLE_BACKEND_URL, a stale route — and answering those with "your key is
-  // revoked" would have every user rotating perfectly good keys during an
-  // outage. A 3xx lands here too, since redirects are not followed.
+  // A 401 or 403 is ambiguous: console rejects a bad USER key and a bad SERVICE
+  // key with the same statuses, and the wrong reading is costly in both
+  // directions. Answering a rotated service key with "your key is revoked" has
+  // every customer rotating a working credential; answering a genuinely revoked
+  // key with a 500 leaves them with no idea what to do.
+  //
+  // The body breaks the tie where it can: console's own handler answers with its
+  // application shape ({ success: ... }), while a gateway or middleware
+  // rejection does not. Anything we cannot read that way is treated as ours,
+  // because that failure mode is recoverable by us and the other is not.
+  //
+  // TODO: confirm console's actual status and body contract for a revoked user
+  // key versus a rejected X-API-Key, and replace this inference with it.
   if (!response.ok) {
+    const ambiguous = response.status === 401 || response.status === 403;
+    const looksLikeConsoleRejection = ambiguous && (await hasConsoleShape(response));
+
+    if (!looksLikeConsoleRejection) {
+      // Distinct event: a spike of these across every organization means our
+      // service credential or routing, not a wave of bad customer keys.
+      console.error(
+        JSON.stringify({ event: "mcp_console_rejected_us", status: response.status })
+      );
+    }
+
     return {
       ok: false,
-      unavailable: response.status !== 401,
+      unavailable: !looksLikeConsoleRejection,
       error: `console returned ${response.status}`,
     };
   }
