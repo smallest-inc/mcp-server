@@ -30,6 +30,12 @@ export interface RequestContext {
    * closed instead of leaking internal hosts.
    */
   localCaller?: boolean;
+  /**
+   * Aborted when the caller's request ends or hits its deadline. Upstream calls
+   * honour it, so a tool that outlives its request stops doing work instead of
+   * holding an outbound socket until the upstream gives up.
+   */
+  signal?: AbortSignal;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
