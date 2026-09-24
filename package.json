@@ -16,7 +16,7 @@
     "smallest"
   ],
   "files": [
-    "dist"
+    "dist/index.js"
   ],
   "bin": {
     "smallest-mcp": "./dist/index.js"
