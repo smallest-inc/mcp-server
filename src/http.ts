@@ -54,7 +54,7 @@ function upstreamsFromEnv() {
  * would risk JSON-RPC id collisions between them, so each request gets its own
  * and both are closed when the response ends.
  */
-async function handleMcpRequest(req: Request, res: Response): Promise<void> {
+async function handleMcpRequest(req: Request, res: Response, abort: AbortController): Promise<void> {
   const server = new McpServer(
     { name: "smallest", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
@@ -81,12 +81,20 @@ async function handleMcpRequest(req: Request, res: Response): Promise<void> {
 
   const deadline = setTimeout(() => {
     logEvent("mcp_request_timeout", { timeoutMs: REQUEST_TIMEOUT_MS });
-    closeQuietly();
+    // Stop the upstream work too. Without this the tool keeps running against
+    // the Atoms API long after the caller has been answered.
+    abort.abort(new Error("MCP request deadline exceeded"));
+
     if (!res.headersSent) {
       res.status(504).json({ error: "timeout", error_description: "The tool call took too long" });
     } else {
+      // The stream is already open, so ending it silently would leave the client
+      // waiting on a response that can never arrive. Send a JSON-RPC error for
+      // the request id first.
+      writeSseError(res, requestIdFrom(req.body), "The tool call took too long");
       res.end();
     }
+    closeQuietly();
   }, REQUEST_TIMEOUT_MS);
 
   try {
@@ -94,6 +102,28 @@ async function handleMcpRequest(req: Request, res: Response): Promise<void> {
     await transport.handleRequest(req, res, req.body);
   } finally {
     clearTimeout(deadline);
+  }
+}
+
+/** The id of a single JSON-RPC request, so a late error can be attributed. */
+function requestIdFrom(body: unknown): string | number | null {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const id = (body as { id?: unknown }).id;
+    if (typeof id === "string" || typeof id === "number") return id;
+  }
+  return null;
+}
+
+function writeSseError(res: Response, id: string | number | null, message: string): void {
+  try {
+    const frame = {
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32001, message },
+    };
+    res.write(`event: message\ndata: ${JSON.stringify(frame)}\n\n`);
+  } catch {
+    // The socket may already be gone; ending it is all that is left.
   }
 }
 
@@ -176,8 +206,14 @@ export function createApp() {
     const requestId = randomUUID();
     res.setHeader("X-Request-Id", requestId);
 
+    const abort = new AbortController();
+    // A client that hangs up should stop the work it asked for.
+    res.on("close", () => abort.abort(new Error("client disconnected")));
+
     try {
-      await runWithContext({ apiKey, ...upstreams }, () => handleMcpRequest(req, res));
+      await runWithContext({ apiKey, ...upstreams, signal: abort.signal }, () =>
+        handleMcpRequest(req, res, abort)
+      );
     } catch (error) {
       logEvent("mcp_request_failed", {
         requestId,
@@ -186,6 +222,11 @@ export function createApp() {
       });
       if (!res.headersSent) {
         res.status(500).json({ error: "server_error", error_description: "Internal error" });
+      } else if (!res.writableEnded) {
+        // Headers are out, so the client is reading a stream that will never
+        // finish. Close it rather than leaving the socket to keepAliveTimeout.
+        writeSseError(res, requestIdFrom(req.body), "Internal error");
+        res.end();
       }
     }
   });

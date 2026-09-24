@@ -16,7 +16,7 @@ export async function paymentsApi(
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
-  const { apiKey, paymentsUrl } = requireContext("for payment API calls");
+  const { apiKey, paymentsUrl , signal } = requireContext("for payment API calls");
 
   const org = await getAuthenticatedOrg();
 
@@ -27,7 +27,7 @@ export async function paymentsApi(
     "X-Organization-Id": org.orgId,
   };
 
-  const init: RequestInit = { method, headers };
+  const init: RequestInit = { method, headers, signal };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }
