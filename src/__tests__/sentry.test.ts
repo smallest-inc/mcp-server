@@ -60,6 +60,22 @@ describe("Sentry redaction", () => {
     expect(redact(`Bearer ${key}`)).not.toContain(key);
   });
 
+  it.each([
+    ["an Error whose stack getter throws", () => {
+      const e = new Error("boom");
+      Object.defineProperty(e, "stack", { get() { throw new Error("nope"); } });
+      return e;
+    }],
+    ["an object impersonating a Map", () => Object.create(Map.prototype)],
+    ["a Proxy whose ownKeys trap throws", () => new Proxy({}, { ownKeys() { throw new Error("nope"); } })],
+  ])("does not lose the whole report to %s", (_label, make) => {
+    // Sentry drops a throwing beforeSend silently, so one hostile object used
+    // to take every field with it.
+    const out = redact({ hostile: make(), keep: "visible" }) as any;
+    expect(out.keep).toBe("visible");
+    expect(out.hostile).toBe("[redacted: unreadable]");
+  });
+
   it("keeps an Error readable instead of flattening it to {}", () => {
     const err = new Error("failed for sk_live_a1b2c3d4e5f6");
     const out = redact({ err }) as any;
@@ -100,6 +116,20 @@ describe("Sentry end to end", () => {
   afterEach(async () => {
     await Sentry.close(0);
     vi.unstubAllEnvs();
+  });
+
+  it("does not install the integrations that would leak requests or swallow rejections", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry();
+    const client = Sentry.getClient();
+
+    // OnUnhandledRejection defaults to warn-and-continue, which silently
+    // contradicts the invariant http.ts defends with its close() handlers.
+    for (const name of ["OnUnhandledRejection", "Http", "Express", "NodeFetch", "Console"]) {
+      expect(client?.getIntegrationByName(name), `${name} should be filtered out`).toBeUndefined();
+    }
+    // Not asserting listenerCount here: the test runner registers its own
+    // unhandledRejection handler, so the integration set is the real signal.
   });
 
   it("never lets an API key reach the transport", async () => {
