@@ -76,7 +76,9 @@ import {
 
 export interface RegisterToolsOptions {
   /**
-   * Whether the process shares a filesystem with the user.
+   * Whether the process shares a filesystem with the user. Required rather than
+   * defaulted, so a new entrypoint has to state which world it is in instead of
+   * silently inheriting filesystem access.
    *
    * True for stdio, where the server runs on the caller's own machine. False
    * for the hosted transport, where "the filesystem" is a pod's ephemeral disk
@@ -84,11 +86,11 @@ export interface RegisterToolsOptions {
    * report success for something that does not exist as far as the user is
    * concerned.
    */
-  localFilesystem?: boolean;
+  localFilesystem: boolean;
 }
 
-export function registerTools(server: McpServer, options: RegisterToolsOptions = {}) {
-  const { localFilesystem = true } = options;
+export function registerTools(server: McpServer, options: RegisterToolsOptions) {
+  const { localFilesystem } = options;
   // Agent CRUD & editing
   registerGetAgents(server);
   registerGetAgent(server);

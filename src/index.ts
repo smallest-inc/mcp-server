@@ -22,7 +22,7 @@ const server = new McpServer(
   }
 );
 
-registerTools(server);
+registerTools(server, { localFilesystem: true });
 registerResources(server);
 
 const transport = new StdioServerTransport();
