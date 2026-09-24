@@ -3,13 +3,16 @@ name: Release
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "*.md"
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/deploy.yml"
-      - ".github/CODEOWNERS"
-      - "Dockerfile"
-      - ".dockerignore"
+    # An allow-list, not paths-ignore. paths-ignore only skips a push when EVERY
+    # changed file matches, so a commit touching both the Dockerfile and
+    # package.json still released — which is how a pure infrastructure change
+    # could cut a version bump, five binaries, a GitHub release and an npm
+    # publish. These are the only paths that change what gets published.
+    paths:
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write
