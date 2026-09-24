@@ -12,6 +12,7 @@ import { DEFAULT_ATOMS_API_URL, DEFAULT_PAYMENTS_API_URL, DEFAULT_WAVES_API_URL,
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
+import { captureError, flushSentry, initSentry } from "./sentry.js";
 import { createApiKeyVerifier } from "./verifier.js";
 
 /**
@@ -78,8 +79,14 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
 
   // Protocol-level failures (bad protocol version, oversized batch, malformed
   // JSON-RPC) are reported through these and would otherwise be silent.
-  transport.onerror = (error) => logEvent("mcp_transport_error", { error: error.message });
-  server.server.onerror = (error) => logEvent("mcp_server_error", { error: error.message });
+  transport.onerror = (error) => {
+    logEvent("mcp_transport_error", { error: error.message });
+    captureError(error, { source: "transport" });
+  };
+  server.server.onerror = (error) => {
+    logEvent("mcp_server_error", { error: error.message });
+    captureError(error, { source: "server" });
+  };
 
   res.on("close", closeQuietly);
 
@@ -235,6 +242,7 @@ export function createApp() {
         orgId: auth?.extra?.orgId,
         error: error instanceof Error ? error.message : String(error),
       });
+      captureError(error, { requestId, orgId: auth?.extra?.orgId });
       if (!res.headersSent) {
         res.status(500).json({ error: "server_error", error_description: "Internal error" });
       } else if (!res.writableEnded) {
@@ -261,6 +269,8 @@ export function createApp() {
 }
 
 export function startServer(port: number): Server {
+  initSentry();
+
   // Without these, the pod starts, passes both probes, and answers 500 to every
   // request — a rollout goes fully green while serving nothing. Better to fail
   // the rollout.
@@ -299,7 +309,9 @@ export function startServer(port: number): Server {
 
     server.close(() => {
       clearTimeout(force);
-      process.exit(0);
+      // Flush before exiting: a pod dying right after a burst of failures is
+      // exactly when the buffer has something in it.
+      void flushSentry().finally(() => process.exit(0));
     });
 
     // server.close() waits for every connection to end. Node 18 does not reap

@@ -30,7 +30,7 @@
     "test:watch": "vitest",
     "dev:http": "tsx src/http.ts",
     "build:stdio": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
-    "build:http": "esbuild src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\nimport { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\""
+    "build:http": "esbuild src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __mcpCreateRequire } from 'node:module';\nvar require = globalThis.require ?? __mcpCreateRequire(import.meta.url);\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -38,14 +38,15 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@sentry/node": "^11.0.0",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "esbuild": "^0.24.0",
+    "express": "^5.2.1",
     "tsx": "^4.19.0",
     "typescript": "^5.4.5",
-    "vitest": "^3.2.7",
-    "express": "^5.2.1"
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=18"
