@@ -56,8 +56,9 @@ jobs:
           kill %1
 
   # The bundle check above writes its own {"type":"module"}, so it cannot catch
-  # the image forgetting to. Build and run the real image instead: without that
-  # line the container fails at startup on any base older than node 22.7.
+  # the image forgetting to. Build and run the real image instead. The image's
+  # CMD passes --no-experimental-detect-module, so a missing declaration fails
+  # here rather than only on a future base-image downgrade.
   image:
     runs-on: ubuntu-latest
     steps:
@@ -80,4 +81,11 @@ jobs:
           curl -fsS http://127.0.0.1:8092/health/live
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8092/mcp)" = "401"
           docker logs mcp-ci
-          docker rm -f mcp-ci
+
+      - name: Container logs
+        if: always()
+        run: docker logs mcp-ci 2>&1 || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f mcp-ci || true

@@ -12,6 +12,8 @@ on:
       - "src/**"
       - "package.json"
       - "package-lock.json"
+      # esbuild reads it, so it changes the published bundle.
+      - "tsconfig.json"
       - ".github/workflows/release.yml"
 
 permissions:
