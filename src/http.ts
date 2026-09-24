@@ -308,10 +308,14 @@ export function startServer(port: number): Server {
     force.unref();
 
     server.close(() => {
-      clearTimeout(force);
       // Flush before exiting: a pod dying right after a burst of failures is
-      // exactly when the buffer has something in it.
-      void flushSentry().finally(() => process.exit(0));
+      // exactly when the buffer has something in it. The force-exit timer stays
+      // armed until the flush settles, so a flush that never returns still ends
+      // the process rather than hanging the shutdown.
+      void flushSentry().finally(() => {
+        clearTimeout(force);
+        process.exit(0);
+      });
     });
 
     // server.close() waits for every connection to end. Node 18 does not reap
