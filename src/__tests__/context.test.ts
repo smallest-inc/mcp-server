@@ -224,6 +224,34 @@ describe("request-scoped credentials", () => {
     expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(1);
   });
 
+  it.each([
+    ["a missing organizations array", { userId: "u" }],
+    ["an empty organizations array", { userId: "u", organizations: [] }],
+    ["a non-string orgId", { userId: "u", organizations: [{ orgId: {} }] }],
+    ["a missing userId", { organizations: [{ orgId: "org-1" }] }],
+  ])("refuses to cache an account response with %s", async (_label, body) => {
+    vi.stubGlobal("fetch", async () => ({ ok: true, status: 200, json: async () => body }));
+
+    // A non-string id would coerce to "[object Object]" and ride on every
+    // payments call as X-Organization-Id.
+    await expect(
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
+    ).rejects.toThrow(/No organizations found/);
+  });
+
+  it("keeps upstream detail out of the error the caller sees", async () => {
+    vi.stubGlobal("fetch", async () => ({
+      ok: false,
+      status: 502,
+      json: async () => ({ message: "upstream atoms-mainbackend.internal:4000 refused" }),
+    }));
+
+    // Hosted, this message reaches the client verbatim.
+    await expect(
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
+    ).rejects.toThrow(/^Failed to verify API key: 502$/);
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });
