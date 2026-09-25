@@ -63,7 +63,7 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
     { name: "smallest", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
   );
-  registerTools(server);
+  registerTools(server, { localFilesystem: false });
   registerResources(server);
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

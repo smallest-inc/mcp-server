@@ -8,22 +8,34 @@ import { formatWavesApiError } from "../waves-api.js";
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
 const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
 
-export function registerTranscribeAudio(server: McpServer) {
+export function registerTranscribeAudio(
+  server: McpServer,
+  options: { localFilesystem: boolean }
+) {
+  const { localFilesystem } = options;
   server.registerTool(
     "transcribe_audio",
     {
+      // The advertised contract has to match the runtime one. Hosted, a path is
+      // a path on the server, so the schema must not invite the model to send
+      // one — it would burn a round trip on a guaranteed error.
       description:
         "Transcribe an audio file to text using Smallest AI's Pulse STT. Supports 32+ languages. " +
         "IMPORTANT: Always ask the user what language the audio is in before calling this tool. " +
-        "Pass a file path on the user's machine (e.g. ~/Desktop/recording.wav) or a publicly accessible URL. " +
-        "Note: files uploaded to the chat sandbox are NOT accessible — ask the user for the actual file path on their machine or a URL instead.",
+        (localFilesystem
+          ? "Pass a file path on the user's machine (e.g. ~/Desktop/recording.wav) or a publicly accessible URL. " +
+            "Note: files uploaded to the chat sandbox are NOT accessible — ask the user for the actual file path on their machine or a URL instead."
+          : "Pass a publicly accessible URL in audio_url. This server runs remotely, so local file paths are not readable — " +
+            "to transcribe a file on your own machine, run the MCP server locally (npx @developer-smallestai/smallest-mcp-server)."),
       inputSchema: {
         file_path: z
           .string()
           .optional()
           .describe(
-            "Path to audio file on the user's machine (e.g. ~/Desktop/recording.wav, /Users/name/audio.mp3). " +
-            "NOT sandbox paths. Either file_path or audio_url is required."
+            localFilesystem
+              ? "Path to audio file on the user's machine (e.g. ~/Desktop/recording.wav, /Users/name/audio.mp3). " +
+                "NOT sandbox paths. Either file_path or audio_url is required."
+              : "Not supported on this server — it runs remotely, so paths refer to the server, not your machine. Use audio_url."
           ),
         audio_url: z
           .string()
@@ -55,6 +67,24 @@ export function registerTranscribeAudio(server: McpServer) {
       },
     },
     async (params) => {
+      // Only complain when the path is the source actually being used. An agent
+      // that helpfully supplies both should get the URL honoured, as it is
+      // locally, rather than a hard failure.
+      if (params.file_path && !params.audio_url && !localFilesystem) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text:
+                "file_path is not available on the hosted server — paths there are on the server, " +
+                "not your machine. Pass audio_url with a publicly reachable URL instead, or run the " +
+                "MCP server locally (npx @developer-smallestai/smallest-mcp-server) to read local files.",
+            },
+          ],
+        };
+      }
+
       if (!params.file_path && !params.audio_url) {
         return {
           content: [

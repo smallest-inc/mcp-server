@@ -74,7 +74,23 @@ import {
   registerUpdateWebhook,
 } from "./webhooks.js";
 
-export function registerTools(server: McpServer) {
+export interface RegisterToolsOptions {
+  /**
+   * Whether the process shares a filesystem with the user. Required rather than
+   * defaulted, so a new entrypoint has to state which world it is in instead of
+   * silently inheriting filesystem access.
+   *
+   * True for stdio, where the server runs on the caller's own machine. False
+   * for the hosted transport, where "the filesystem" is a pod's ephemeral disk
+   * the caller can never reach — so a tool that writes a file there would
+   * report success for something that does not exist as far as the user is
+   * concerned.
+   */
+  localFilesystem: boolean;
+}
+
+export function registerTools(server: McpServer, options: RegisterToolsOptions) {
+  const { localFilesystem } = options;
   // Agent CRUD & editing
   registerGetAgents(server);
   registerGetAgent(server);
@@ -158,7 +174,13 @@ export function registerTools(server: McpServer) {
   registerGetPhoneNumbers(server);
   registerGetVoices(server);
   registerAnalyticsTools(server);
-  registerTextToSpeech(server);
-  registerTranscribeAudio(server);
+  // text_to_speech only writes audio to a local path — there is no URL-returning
+  // mode — so it is simply absent when hosted. transcribe_audio already accepts
+  // audio_url as an alternative to file_path, so it stays and rejects the path
+  // form instead.
+  if (localFilesystem) {
+    registerTextToSpeech(server);
+  }
+  registerTranscribeAudio(server, { localFilesystem });
   registerInviteMember(server);
 }
