@@ -123,7 +123,7 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install
+      - run: npm ci
 
       # Bundle as ESM and build standalone binaries
       - name: Bundle
@@ -188,7 +188,7 @@ jobs:
       - name: Set version in package.json
         run: npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
 
-      - run: npm install
+      - run: npm ci
       - run: npm run build
       - run: npm publish --access public
         env:
