@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { readFile } from "fs/promises";
 
-import { requireContext } from "../context.js";
+import { optionalContext, requireContext } from "../context.js";
 import { formatWavesApiError } from "../waves-api.js";
 
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
@@ -81,6 +81,10 @@ export function registerTranscribeAudio(server: McpServer) {
       if (params.audio_url) {
         // Send URL as JSON
         response = await fetch(url, {
+          // This tool calls fetch directly rather than through wavesApi, so the
+          // request's abort signal has to be threaded in by hand — without it a
+          // stalled upstream outlives the caller's deadline.
+          signal: optionalContext()?.signal,
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -122,6 +126,10 @@ export function registerTranscribeAudio(server: McpServer) {
         const contentType = contentTypeMap[ext ?? ""] ?? "application/octet-stream";
 
         response = await fetch(url, {
+          // This tool calls fetch directly rather than through wavesApi, so the
+          // request's abort signal has to be threaded in by hand — without it a
+          // stalled upstream outlives the caller's deadline.
+          signal: optionalContext()?.signal,
           method: "POST",
           headers: {
             "Content-Type": contentType,

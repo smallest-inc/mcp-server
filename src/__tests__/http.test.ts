@@ -273,6 +273,33 @@ describe("hosted HTTP transport", () => {
     expect(body).toContain("too long");
   });
 
+  it("aborts the upstream work when the deadline fires", async () => {
+    vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "300");
+    let upstreamSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }),
+        };
+      }
+      upstreamSignal = init?.signal;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+
+    await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live" }).then((r) => r.text());
+
+    // Answering the caller is not enough: without this the tool keeps running
+    // against the Atoms API, holding an outbound socket until it gives up.
+    expect(upstreamSignal).toBeInstanceOf(AbortSignal);
+    expect(upstreamSignal?.aborted).toBe(true);
+  });
+
   it("answers every id in a batch when it times out", async () => {
     vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "300");
     vi.stubGlobal("fetch", async (input: any, init?: any) => {
