@@ -10,8 +10,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Manifest first so the install layer survives source-only edits.
-COPY package.json ./
-RUN npm install --ignore-scripts
+COPY package.json package-lock.json ./
+# npm ci, not npm install: the image is the artifact that reaches production, so
+# it must resolve the same tree CI tested rather than whatever the ranges allow
+# on the day it is built.
+RUN npm ci --ignore-scripts
 
 COPY tsconfig.json ./
 COPY src ./src
