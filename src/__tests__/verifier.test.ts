@@ -8,6 +8,8 @@ const CONFIG: ConsoleConfig = { url: "https://console.example", serviceApiKey: "
 
 function stubConsole(response: { status?: number; body?: unknown } | { reject: Error }) {
   const calls: Array<{ url: string; headers: Record<string, string>; redirect?: string }> = [];
+  let bodiesRead = 0;
+  (stubConsole as { bodiesRead?: () => number }).bodiesRead = () => bodiesRead;
 
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
     calls.push({ url, headers: init.headers as Record<string, string>, redirect: init.redirect });
@@ -16,7 +18,10 @@ function stubConsole(response: { status?: number; body?: unknown } | { reject: E
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: async () => response.body,
+      json: async () => {
+        bodiesRead += 1;
+        return response.body;
+      },
     };
   });
 
@@ -121,6 +126,18 @@ describe("API key verifier", () => {
     await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
       ServerError
     );
+  });
+
+  it("consumes the response body even when it does not need to read it", async () => {
+    stubConsole({ status: 500, body: { message: "boom" } });
+
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+      ServerError
+    );
+
+    // undici holds the connection until the body is consumed, so skipping it on
+    // a 500 accumulates sockets during exactly the outage producing them.
+    expect((stubConsole as { bodiesRead?: () => number }).bodiesRead?.()).toBe(1);
   });
 
   it("validates once for repeated requests with the same key", async () => {

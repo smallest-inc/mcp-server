@@ -57,23 +57,23 @@ export function consoleConfigFromEnv(): ConsoleConfig | null {
  * Does the error body look like console's own application response rather than
  * a gateway's? Console answers with { success, ... }; an edge rejection does not.
  */
-async function hasConsoleShape(response: Response): Promise<boolean> {
-  // Only ever called on the !response.ok path, which never reads the body
-  // again — a Response body can only be consumed once.
+async function readJson(response: Response): Promise<unknown> {
   try {
-    const body = await response.json();
-    // A boolean specifically. `{success: null}` or `{success: "nope"}` from a
-    // gateway would otherwise be read as console's own verdict and blame the
-    // caller for what is most likely our service credential.
-    return (
-      typeof body === "object" &&
-      body !== null &&
-      !Array.isArray(body) &&
-      typeof (body as { success?: unknown }).success === "boolean"
-    );
+    return await response.json();
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+function hasConsoleShape(body: unknown): boolean {
+  // A boolean specifically. `{success: null}` or `{success: "nope"}` from a
+  // gateway would otherwise be read as console's own verdict and blame the
+  // caller for what is most likely our service credential.
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as { success?: unknown }).success === "boolean"
+  );
 }
 
 /**
@@ -130,8 +130,12 @@ export async function validateApiKey(
   // TODO: confirm console's actual status and body contract for a revoked user
   // key versus a rejected X-API-Key, and replace this inference with it.
   if (!response.ok) {
+    // Read the body unconditionally. undici holds the connection until the body
+    // is consumed, so short-circuiting on a 500 accumulates sockets during
+    // exactly the console outage that produces them.
+    const errorBody = await readJson(response);
     const ambiguous = response.status === 401 || response.status === 403;
-    const looksLikeConsoleRejection = ambiguous && (await hasConsoleShape(response));
+    const looksLikeConsoleRejection = ambiguous && hasConsoleShape(errorBody);
 
     if (!looksLikeConsoleRejection) {
       // Distinct event: a spike of these across every organization means our
@@ -148,10 +152,8 @@ export async function validateApiKey(
     };
   }
 
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
+  const body = await readJson(response);
+  if (body === undefined) {
     return { ok: false, unavailable: true, error: "console returned a non-JSON body" };
   }
 
