@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AtomsChatClient, ChatTurn } from "../chat-client.js";
-import { requireContext } from "../context.js";
+import { optionalContext, requireContext } from "../context.js";
 
 /**
  * Derive the realtime WebSocket base from the caller's HTTP API base:
@@ -85,6 +85,7 @@ export function registerChatWithAgent(server: McpServer) {
 
       const client = new AtomsChatClient({
         apiKey,
+        signal: optionalContext()?.signal,
         agentId: params.agent_id,
         baseWssUrl: wssBaseUrl(apiUrl),
         variables: params.variables,

@@ -21,6 +21,8 @@ export interface ChatTurn {
 export interface ChatClientOptions {
   apiKey: string;
   agentId: string;
+  /** Aborted when the caller's request ends; closes the socket. */
+  signal?: AbortSignal;
   /** Base URL, e.g. wss://api.smallest.ai/atoms/v1 (no trailing /agent/connect). */
   baseWssUrl: string;
   variables?: Record<string, string | number | boolean>;
@@ -102,6 +104,18 @@ export class AtomsChatClient {
   ): Promise<{ callId: string; sessionId: string; greeting: string | null }> {
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(this.connectUrl());
+
+      // A chat session is chargeable and can run for minutes. When the caller's
+      // request ends — deadline or disconnect — the session must end with it,
+      // or it keeps talking to an agent nobody is listening to.
+      this.opts.signal?.addEventListener(
+        "abort",
+        () => {
+          this.closedReason = "the request was cancelled";
+          ws.close();
+        },
+        { once: true }
+      );
       this.ws = ws;
       let settled = false;
 
