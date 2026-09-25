@@ -29,7 +29,12 @@ const REMOVED = [
   "test_version", "rename_draft", "update_version", "compare_version_metrics",
 ];
 
-const srv = spawn(process.execPath, ["dist/index.js"], {
+// Defaults to the local build; CI also points it at the packed-and-installed
+// tarball, which is the only way to catch a runtime import that is available in
+// the repo but missing from the published package's dependencies.
+const SERVER_PATH = process.env.SMOKE_SERVER_PATH ?? "dist/index.js";
+
+const srv = spawn(process.execPath, [SERVER_PATH], {
   env: { ...process.env, ATOMS_API_KEY: "smoke-test" },
   stdio: ["pipe", "pipe", "inherit"],
 });

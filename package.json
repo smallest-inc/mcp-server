@@ -16,23 +16,24 @@
     "smallest"
   ],
   "files": [
-    "dist"
+    "dist/index.js"
   ],
   "bin": {
     "smallest-mcp": "./dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/index.ts src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
+    "build": "npm run build:stdio && npm run build:http",
     "dev": "tsx src/index.ts",
     "type-check": "tsc --noEmit",
     "smoke": "npm run build && node smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:http": "tsx src/http.ts"
+    "dev:http": "tsx src/http.ts",
+    "build:stdio": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
+    "build:http": "esbuild src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\nimport { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "express": "^5.2.1",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   },
@@ -43,7 +44,8 @@
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",
     "typescript": "^5.4.5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "express": "^5.2.1"
   },
   "engines": {
     "node": ">=18"

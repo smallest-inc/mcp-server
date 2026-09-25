@@ -19,3 +19,73 @@ jobs:
       - run: npm run type-check
       - run: npm test
       - run: npm run build
+
+      # The published package resolves its dependencies at install time, so a
+      # runtime import that is only a devDependency passes every check in the
+      # repo and breaks for every npx user. Install the tarball with --omit=dev
+      # and drive the real binary.
+      - name: stdio package runs from a clean install
+        run: |
+          set -euo pipefail
+          npm pack --silent
+          mkdir -p /tmp/pkgtest && cd /tmp/pkgtest
+          npm init -y >/dev/null
+          npm install --omit=dev --silent "$GITHUB_WORKSPACE"/developer-smallestai-smallest-mcp-server-*.tgz
+          cd "$GITHUB_WORKSPACE"
+          SMOKE_SERVER_PATH=/tmp/pkgtest/node_modules/@developer-smallestai/smallest-mcp-server/dist/index.js \
+            node smoke.mjs
+
+      # The hosted bundle ships as a single file with no node_modules. Running it
+      # from an empty directory catches a dependency esbuild failed to inline.
+      # It does NOT guard the Dockerfile — it writes its own package.json — so
+      # the image is built and run separately below.
+      - name: hosted bundle runs standalone
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/httptest && cp dist/http.js /tmp/httptest/
+          printf '{"type":"module"}' > /tmp/httptest/package.json
+          cd /tmp/httptest
+          CONSOLE_BACKEND_URL=https://console.invalid CONSOLE_API_KEY=ci PORT=8099 \
+            node --no-experimental-detect-module http.js &
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8099/health/live >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8099/health/live
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8099/mcp)" = "401"
+          kill %1
+
+  # The bundle check above writes its own {"type":"module"}, so it cannot catch
+  # the image forgetting to. Build and run the real image instead. The image's
+  # CMD passes --no-experimental-detect-module, so a missing declaration fails
+  # here rather than only on a future base-image downgrade.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mcp-server:ci .
+
+      - name: The image actually serves
+        run: |
+          set -euo pipefail
+          docker run -d --name mcp-ci -p 8092:8092 \
+            -e CONSOLE_BACKEND_URL=https://console.invalid \
+            -e CONSOLE_API_KEY=ci \
+            mcp-server:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8092/health/live >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8092/health/live
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8092/mcp)" = "401"
+          docker logs mcp-ci
+
+      - name: Container logs
+        if: always()
+        run: docker logs mcp-ci 2>&1 || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f mcp-ci || true

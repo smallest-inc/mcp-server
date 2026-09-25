@@ -1,0 +1,153 @@
+name: Build and Deploy hosted MCP server
+
+# Mirrors atoms-platform's integrations-deploy.yaml.
+#
+# PREREQUISITES, none of which this repo can create for itself:
+#   - ECR repos <env>/mcp in account 301490598848 (smallest-infra)
+#   - helm-charts/mcp/env/<env>/ap-south-1.yaml in smallest-infra
+#   - repo secrets GH_APP_ID and GH_APP_PRIVATE_KEY, for the app token that
+#     pushes the image-tag bump to smallest-infra
+#   - GitHub Environments named dev and prod WITH protection rules. GitHub
+#     auto-creates them unprotected on first use, so the approval gate is
+#     nominal until someone configures reviewers.
+#   - confirmation that the dev-named IAM role may push to prod/mcp, and that
+#     the image arch matches the node group
+# Until those exist this workflow will fail at the first AWS step, by design —
+# it is not wired to any push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: "dev"
+
+permissions:
+  id-token: write
+  contents: read
+
+# Two dispatches close together would race on the smallest-infra checkout: the
+# second push is rejected non-fast-forward, the image is already in ECR, and the
+# run goes red with the tag never deployed.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # On the job that pushes to ECR, not only on the deploy: without it the prod
+    # image is built and pushed before any reviewer sees the run. The branch
+    # guard below stops accidents, not intent — workflow_dispatch runs the
+    # workflow file from the selected ref, so the real control is the
+    # environment's protection rules, which have to be configured in the repo.
+    environment: ${{ github.event.inputs.environment }}
+    outputs:
+      image_tag: ${{ steps.set-vars.outputs.image_tag }}
+      environment: ${{ steps.set-vars.outputs.environment }}
+
+    steps:
+      - name: Validate branch for prod deployment
+        if: github.event.inputs.environment == 'prod' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Production deployments are only allowed from the main branch. Current branch: ${GITHUB_REF}"
+          exit 1
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment and image tag
+        id: set-vars
+        run: |
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          echo "image_tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials (ap-south-1)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::301490598848:role/smallest-dev-iam-github-eks-role
+          aws-region: ap-south-1
+
+      - name: Login to ECR (ap-south-1)
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: 301490598848
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Layer cache lives in ECR under the `buildcache` tag. ignore-error on
+      # cache-to: a failed cache export must never fail the deploy.
+      - name: Build and push image (ap-south-1)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:${{ steps.set-vars.outputs.image_tag }}
+          cache-from: type=registry,ref=301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:buildcache
+          cache-to: type=registry,ref=301490598848.dkr.ecr.ap-south-1.amazonaws.com/${{ steps.set-vars.outputs.environment }}/mcp:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: ${{ needs.build-and-push.outputs.environment }}
+
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: smallest-inc
+          repositories: smallest-infra
+
+      - name: Checkout smallest-infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: smallest-inc/smallest-infra
+          token: ${{ steps.app-token.outputs.token }}
+          path: smallest-infra
+
+      # ArgoCD syncs from the chart, so the deploy is a commit to it.
+      # yq is preinstalled on ubuntu-latest. The mikefarah/yq action is a Docker
+      # action that runs yq rather than installing it, so invoking it bare
+      # installed nothing and only worked by accident.
+      - name: Update image tag in helm values
+        env:
+          TAG_SHA: ${{ needs.build-and-push.outputs.image_tag }}
+          ENVIRONMENT: ${{ needs.build-and-push.outputs.environment }}
+        run: |
+          yq -i ".image.tag = \"${TAG_SHA}\"" "smallest-infra/helm-charts/mcp/env/${ENVIRONMENT}/ap-south-1.yaml"
+
+      - name: Commit and push helm values update
+        env:
+          TAG_SHA: ${{ needs.build-and-push.outputs.image_tag }}
+          ENVIRONMENT: ${{ needs.build-and-push.outputs.environment }}
+        run: |
+          cd smallest-infra
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "helm-charts/mcp/env/${ENVIRONMENT}/ap-south-1.yaml"
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            SHORT_SHA="${TAG_SHA:0:7}"
+            git commit -m "chore(mcp): update ${ENVIRONMENT} image tag to ${SHORT_SHA}
+
+          Triggered by: ${{ github.repository }}@${TAG_SHA}
+          Workflow: ${{ github.workflow }}
+          Actor: ${{ github.actor }}"
+            # Another deploy may have landed between checkout and push.
+            git pull --rebase origin HEAD
+            git push
+          fi
