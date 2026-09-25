@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** Default Atoms API base. Overridable per context for non-prod environments. */
+/** Default API bases. Overridable per context for non-prod environments. */
 export const DEFAULT_ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
+export const DEFAULT_WAVES_API_URL = "https://api.smallest.ai/waves/v1";
+export const DEFAULT_PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
 
 /**
  * The credentials and endpoints belonging to ONE caller.
@@ -15,8 +17,12 @@ export const DEFAULT_ATOMS_API_URL = "https://api.smallest.ai/atoms/v1";
  */
 export interface RequestContext {
   apiKey: string;
-  /** Atoms API base, no trailing slash. */
+  /** Atoms API base, no trailing slash. The chat WebSocket base is derived from it. */
   apiUrl: string;
+  /** Waves API base, no trailing slash. */
+  wavesUrl: string;
+  /** Payments API base, no trailing slash. */
+  paymentsUrl: string;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
@@ -36,6 +42,16 @@ export function setProcessDefault(context: RequestContext | null): void {
 /** Run `fn` with `context` in scope. Everything awaited inside inherits it. */
 export function runWithContext<T>(context: RequestContext, fn: () => T): T {
   return store.run(context, fn);
+}
+
+/**
+ * The calling context, or null when nothing established one.
+ *
+ * For the handful of upstream endpoints that are public: they still need a base
+ * URL, but must not demand a credential the caller may not have.
+ */
+export function optionalContext(): RequestContext | null {
+  return store.getStore() ?? processDefault;
 }
 
 /**
@@ -63,13 +79,26 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+/**
+ * The configured upstream bases, with no credential attached.
+ *
+ * contextFromEnv returns null when ATOMS_API_KEY is unset, which is right for
+ * anything needing a credential — but it would also discard a configured
+ * WAVES_API_URL, so a public call made before a key is pasted would silently go
+ * to production instead of wherever the operator pointed it.
+ */
+export function basesFromEnv(): Omit<RequestContext, "apiKey"> {
+  return {
+    apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
+    wavesUrl: stripTrailingSlash(process.env.WAVES_API_URL || DEFAULT_WAVES_API_URL),
+    paymentsUrl: stripTrailingSlash(process.env.PAYMENTS_API_URL || DEFAULT_PAYMENTS_API_URL),
+  };
+}
+
 export function contextFromEnv(): RequestContext | null {
   const apiKey = process.env.ATOMS_API_KEY;
   if (!apiKey) return null;
-  return {
-    apiKey,
-    // Trailing slashes are stripped because every caller appends a path that
-    // already starts with one — a base ending in "/" would produce "//agent".
-    apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
-  };
+  // Trailing slashes are stripped because every caller appends a path that
+  // already starts with one — a base ending in "/" would produce "//agent".
+  return { apiKey, ...basesFromEnv() };
 }

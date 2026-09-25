@@ -1,10 +1,6 @@
 import { getAuthenticatedOrg } from "./auth.js";
 import { requireContext } from "./context.js";
 
-// TODO: move to the request context alongside apiUrl when the base URLs are
-// made configurable — this one is still pinned to prod.
-const PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
-
 interface PaymentsApiResult {
   ok: boolean;
   status: number;
@@ -20,11 +16,11 @@ export async function paymentsApi(
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
-  const { apiKey } = requireContext("for payment API calls");
+  const { apiKey, paymentsUrl } = requireContext("for payment API calls");
 
   const org = await getAuthenticatedOrg();
 
-  const url = `${PAYMENTS_API_URL}${path}`;
+  const url = `${paymentsUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${apiKey}`,

@@ -1,8 +1,4 @@
-import { requireContext } from "./context.js";
-
-// TODO: move to the request context alongside apiUrl when the base URLs are
-// made configurable — this one is still pinned to prod.
-const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
+import { basesFromEnv, optionalContext, requireContext } from "./context.js";
 
 interface WavesApiResult {
   ok: boolean;
@@ -11,8 +7,7 @@ interface WavesApiResult {
 }
 
 /**
- * Make a request to the Waves API.
- * WAVES_API_URL is the full base URL (e.g. "https://waves-api.smallest.ai/api/v1").
+ * Make a request to the Waves API, against the base in the caller's context.
  * Auth is optional — some endpoints (like voice listing) are public.
  */
 export async function wavesApi(
@@ -20,7 +15,10 @@ export async function wavesApi(
   path: string,
   options?: { auth?: boolean; body?: unknown }
 ): Promise<WavesApiResult> {
-  const url = `${WAVES_API_URL}${path}`;
+  // Some endpoints here are public (voice listing), so the base URL is read
+  // without demanding a credential — requiring one unconditionally would break
+  // get_voices for anyone who has not configured a key yet.
+  const url = `${optionalContext()?.wavesUrl ?? basesFromEnv().wavesUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
