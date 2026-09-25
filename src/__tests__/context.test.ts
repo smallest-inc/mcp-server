@@ -252,6 +252,29 @@ describe("request-scoped credentials", () => {
     ).rejects.toThrow(/^Failed to verify API key: 502$/);
   });
 
+  it("does not pass an upstream 5xx body back to the caller", async () => {
+    stubFetch();
+    const { formatApiError } = await import("../api.js");
+
+    const message = formatApiError({
+      ok: false,
+      status: 502,
+      data: { message: "connect ECONNREFUSED atoms-mainbackend.internal:4000" },
+    });
+
+    // Hosted, this string reaches a stranger.
+    expect(message).not.toContain("internal");
+    expect(message).toBe("API error 502: the upstream service failed");
+  });
+
+  it("still passes a 4xx message through, since it is meant for the caller", async () => {
+    const { formatApiError } = await import("../api.js");
+
+    expect(
+      formatApiError({ ok: false, status: 404, data: { message: "Agent not found" } })
+    ).toBe("API error 404: Agent not found");
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });
