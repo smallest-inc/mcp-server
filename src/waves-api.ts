@@ -1,5 +1,8 @@
+import { requireContext } from "./context.js";
+
+// TODO: move to the request context alongside apiUrl when the base URLs are
+// made configurable — this one is still pinned to prod.
 const WAVES_API_URL = "https://api.smallest.ai/waves/v1";
-const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface WavesApiResult {
   ok: boolean;
@@ -23,10 +26,7 @@ export async function wavesApi(
   };
 
   if (options?.auth) {
-    if (!ATOMS_API_KEY) {
-      throw new Error("ATOMS_API_KEY environment variable is required for authenticated Waves API calls");
-    }
-    headers.Authorization = `Bearer ${ATOMS_API_KEY}`;
+    headers.Authorization = `Bearer ${requireContext("for authenticated Waves API calls").apiKey}`;
   }
 
   const init: RequestInit = { method, headers };
@@ -46,7 +46,37 @@ export async function wavesApi(
   return { ok: response.ok, status: response.status, data };
 }
 
+/**
+ * Turn an upstream failure into something safe to hand the caller.
+ *
+ * A 4xx is the API telling the caller what they did wrong, so its own message
+ * is the useful thing to pass on. A 5xx is our side failing, and its body
+ * routinely names internal hosts and ports — hosted, that string goes straight
+ * to a stranger. Those get a generic line, with the detail in the log.
+ */
+function describeUpstreamError(label: string, status: number, data: unknown): string {
+  if (status >= 500) {
+    console.error(
+      JSON.stringify({
+        event: "upstream_error",
+        upstream: label,
+        status,
+        body: JSON.stringify(data)?.slice(0, 500),
+      })
+    );
+    return `${label} error ${status}: the upstream service failed`;
+  }
+
+  const body = data as { message?: unknown; error?: unknown } | null | undefined;
+  const message =
+    typeof body?.message === "string"
+      ? body.message
+      : typeof body?.error === "string"
+        ? body.error
+        : "no detail returned";
+  return `${label} error ${status}: ${message}`;
+}
+
 export function formatWavesApiError(result: WavesApiResult): string {
-  const msg = result.data?.message ?? result.data?.error ?? JSON.stringify(result.data);
-  return `Waves API error ${result.status}: ${msg}`;
+  return describeUpstreamError("Waves API", result.status, result.data);
 }

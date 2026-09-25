@@ -1,7 +1,9 @@
 import { getAuthenticatedOrg } from "./auth.js";
+import { requireContext } from "./context.js";
 
+// TODO: move to the request context alongside apiUrl when the base URLs are
+// made configurable — this one is still pinned to prod.
 const PAYMENTS_API_URL = "https://api.smallest.ai/payment/v1";
-const ATOMS_API_KEY = process.env.ATOMS_API_KEY;
 
 interface PaymentsApiResult {
   ok: boolean;
@@ -18,16 +20,14 @@ export async function paymentsApi(
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
-  if (!ATOMS_API_KEY) {
-    throw new Error("ATOMS_API_KEY environment variable is required for payment API calls");
-  }
+  const { apiKey } = requireContext("for payment API calls");
 
   const org = await getAuthenticatedOrg();
 
   const url = `${PAYMENTS_API_URL}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${ATOMS_API_KEY}`,
+    Authorization: `Bearer ${apiKey}`,
     "X-Organization-Id": org.orgId,
   };
 
@@ -48,7 +48,37 @@ export async function paymentsApi(
   return { ok: response.ok, status: response.status, data };
 }
 
+/**
+ * Turn an upstream failure into something safe to hand the caller.
+ *
+ * A 4xx is the API telling the caller what they did wrong, so its own message
+ * is the useful thing to pass on. A 5xx is our side failing, and its body
+ * routinely names internal hosts and ports — hosted, that string goes straight
+ * to a stranger. Those get a generic line, with the detail in the log.
+ */
+function describeUpstreamError(label: string, status: number, data: unknown): string {
+  if (status >= 500) {
+    console.error(
+      JSON.stringify({
+        event: "upstream_error",
+        upstream: label,
+        status,
+        body: JSON.stringify(data)?.slice(0, 500),
+      })
+    );
+    return `${label} error ${status}: the upstream service failed`;
+  }
+
+  const body = data as { message?: unknown; error?: unknown } | null | undefined;
+  const message =
+    typeof body?.message === "string"
+      ? body.message
+      : typeof body?.error === "string"
+        ? body.error
+        : "no detail returned";
+  return `${label} error ${status}: ${message}`;
+}
+
 export function formatPaymentsApiError(result: PaymentsApiResult): string {
-  const msg = result.data?.message ?? result.data?.error ?? JSON.stringify(result.data);
-  return `Payments API error ${result.status}: ${msg}`;
+  return describeUpstreamError("Payments API", result.status, result.data);
 }
