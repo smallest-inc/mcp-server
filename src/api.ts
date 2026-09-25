@@ -17,7 +17,7 @@ export async function atomsApi(
   body?: unknown,
   extraHeaders?: Record<string, string>
 ): Promise<ApiResult> {
-  const { apiKey, apiUrl } = requireContext();
+  const { apiKey, apiUrl , signal } = requireContext();
 
   // Ensure org is resolved (validates the API key on first call)
   await getAuthenticatedOrg();
@@ -29,7 +29,7 @@ export async function atomsApi(
     ...extraHeaders,
   };
 
-  const init: RequestInit = { method, headers };
+  const init: RequestInit = { method, headers, signal };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
   }

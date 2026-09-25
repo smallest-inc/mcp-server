@@ -1,7 +1,7 @@
 {
   "name": "@developer-smallestai/smallest-mcp-server",
   "version": "0.1.1",
-  "description": "MCP server for the Smallest AI platform — manage agents, debug calls, view analytics from your IDE",
+  "description": "MCP server for the Smallest AI platform \u2014 manage agents, debug calls, view analytics from your IDE",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -22,19 +22,22 @@
     "smallest-mcp": "./dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
+    "build": "esbuild src/index.ts src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\" --packages=external",
     "dev": "tsx src/index.ts",
     "type-check": "tsc --noEmit",
     "smoke": "npm run build && node smoke.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:http": "tsx src/http.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "express": "^5.2.1",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
     "esbuild": "^0.24.0",

@@ -4,7 +4,7 @@ import { writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
-import { requireContext } from "../context.js";
+import { optionalContext, requireContext } from "../context.js";
 import { formatWavesApiError } from "../waves-api.js";
 
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
@@ -75,6 +75,9 @@ export function registerTextToSpeech(server: McpServer) {
       };
 
       const response = await fetch(url, {
+        // Undefined on stdio, where there is no request to cancel. Present so
+        // every fetch in the codebase carries the caller's signal.
+        signal: optionalContext()?.signal,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
