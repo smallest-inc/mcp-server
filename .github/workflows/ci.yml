@@ -15,6 +15,17 @@ jobs:
         with:
           node-version: 22
 
+      # A lockfile generated over an existing node_modules records versions but
+      # no integrity hash, so npm ci can't detect a substituted or tampered
+      # tarball — the supply-chain property the lockfile is committed for.
+      - name: lockfile pins every package by hash
+        run: |
+          node -e 'const p=require("./package-lock.json").packages;
+          const bad=Object.keys(p).filter(k=>k&&!p[k].link&&!p[k].integrity);
+          if(bad.length){console.error("no integrity for "+bad.length+" packages:");
+          console.error(bad.join("\n"));process.exit(1)}
+          console.log("all "+Object.keys(p).filter(k=>k).length+" packages pinned by hash")'
+
       - run: npm ci
       - run: npm run type-check
       - run: npm test
