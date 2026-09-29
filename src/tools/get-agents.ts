@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import type { IAgentDTO } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetAgents(server: McpServer) {
   server.registerTool(
@@ -56,7 +57,7 @@ export function registerGetAgents(server: McpServer) {
       const result = await atomsApi("GET", `/agent?${queryParams.toString()}`);
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerTestAgent(server: McpServer) {
   server.registerTool(
@@ -50,7 +51,7 @@ export function registerTestAgent(server: McpServer) {
 
       const branch = await resolveBranch(params.agent_id, params.branch_id);
       if (!branch.ok) {
-        return { content: [{ type: "text" as const, text: branch.message }] };
+        return toolError(branch.message);
       }
 
       const body: Record<string, unknown> = { mode: params.mode ?? "webcall" };
@@ -64,7 +65,7 @@ export function registerTestAgent(server: McpServer) {
         body
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

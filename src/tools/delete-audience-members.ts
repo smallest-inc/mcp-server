@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerDeleteAudienceMembers(server: McpServer) {
   server.registerTool(
@@ -25,7 +26,7 @@ export function registerDeleteAudienceMembers(server: McpServer) {
       );
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

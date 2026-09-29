@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { formatPaymentsApiError, paymentsApi } from "../payments-api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerUpdateBillingAlerts(server: McpServer) {
   server.registerTool(
@@ -34,7 +35,7 @@ export function registerUpdateBillingAlerts(server: McpServer) {
       const result = await paymentsApi("PUT", "/billing-alerts", body);
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatPaymentsApiError(result) }] };
+        return toolError(formatPaymentsApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

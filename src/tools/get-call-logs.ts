@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import type { IAgentDTO, ICallCountsLogEntry } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerListCalls(server: McpServer) {
   server.registerTool(
@@ -43,7 +44,7 @@ export function registerListCalls(server: McpServer) {
           `/agent?page=1&offset=5&search=${encodeURIComponent(params.agent_name)}`
         );
         if (!agentsResult.ok) {
-          return { content: [{ type: "text" as const, text: formatApiError(agentsResult) }] };
+          return toolError(formatApiError(agentsResult));
         }
         const agents = (agentsResult.data?.data?.agents ?? []) as IAgentDTO[];
         if (agents.length === 0) {
@@ -75,7 +76,7 @@ export function registerListCalls(server: McpServer) {
       const result = await atomsApi("GET", `/analytics/call-counts-log?${queryParams.toString()}`);
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

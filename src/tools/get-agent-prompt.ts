@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import type { IAgentDTO } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetAgentPrompt(server: McpServer) {
   server.registerTool(
@@ -20,9 +21,9 @@ export function registerGetAgentPrompt(server: McpServer) {
 
       if (!agentResult.ok) {
         if (agentResult.status === 404) {
-          return { content: [{ type: "text" as const, text: `Agent not found: ${params.agent_id}` }] };
+          return toolError(`Agent not found: ${params.agent_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(agentResult) }] };
+        return toolError(formatApiError(agentResult));
       }
 
       const agent = (agentResult.data?.data ?? agentResult.data) as IAgentDTO;

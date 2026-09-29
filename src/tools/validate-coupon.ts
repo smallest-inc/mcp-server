@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { formatPaymentsApiError, paymentsApi } from "../payments-api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerValidateCoupon(server: McpServer) {
   server.registerTool(
@@ -20,7 +21,7 @@ export function registerValidateCoupon(server: McpServer) {
       );
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatPaymentsApiError(result) }] };
+        return toolError(formatPaymentsApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

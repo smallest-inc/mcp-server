@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import type { ICallToolCallDTO, ICallTurnStatsDTO, ICallUsageDTO } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerDebugCall(server: McpServer) {
   server.registerTool(
@@ -26,7 +27,7 @@ export function registerDebugCall(server: McpServer) {
         const errorMsg = logsResult.status === 404
           ? `Call not found: ${params.call_id}. Make sure you're using the full callId (e.g. CALL-1234567890-abc123).`
           : formatApiError(logsResult);
-        return { content: [{ type: "text" as const, text: errorMsg }] };
+        return toolError(errorMsg);
       }
 
       const logsData = logsResult.ok ? (logsResult.data?.data ?? logsResult.data) : null;

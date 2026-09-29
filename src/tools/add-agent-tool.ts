@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { fetchAgentAndTools, persistAgentTools, DRAFT_HINT } from "./agent-tools-helper.js";
+import { toolError } from "./tool-error.js";
 
 /** Schema for one API-call tool — used both for the single-tool params and the batch `tools` array.
  *  Exported for reuse by the Playbooks tools (playbook tools use the same function shape). */
@@ -200,7 +201,7 @@ export function registerAddAgentTool(server: McpServer) {
 
       const fetched = await fetchAgentAndTools(params.agent_id, params.branch_id);
       if (!fetched.ok) {
-        return { content: [{ type: "text" as const, text: fetched.message }] };
+        return toolError(fetched.message);
       }
 
       // Upsert by name (case-sensitive): keep tools not being replaced, append the new ones.
@@ -212,7 +213,7 @@ export function registerAddAgentTool(server: McpServer) {
 
       const persisted = await persistAgentTools(fetched.agent, fetched.branchId, tools);
       if (!persisted.ok) {
-        return { content: [{ type: "text" as const, text: persisted.message }] };
+        return toolError(persisted.message);
       }
 
       const result: Record<string, unknown> = {

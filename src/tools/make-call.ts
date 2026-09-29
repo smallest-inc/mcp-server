@@ -4,6 +4,7 @@ import { z } from "zod";
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveLiveBranch } from "../versioning.js";
 import type { IAgentDTO } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerMakeCall(server: McpServer) {
   server.registerTool(
@@ -36,7 +37,7 @@ export function registerMakeCall(server: McpServer) {
       // Check if agent is conversation flow (blocked)
       const agentResult = await atomsApi("GET", `/agent/${encodeURIComponent(params.agent_id)}`);
       if (!agentResult.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(agentResult) }] };
+        return toolError(formatApiError(agentResult));
       }
       const agent = (agentResult.data?.data ?? agentResult.data) as IAgentDTO;
       if (agent.workflowType === "workflow_graph") {
@@ -81,7 +82,7 @@ export function registerMakeCall(server: McpServer) {
       });
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

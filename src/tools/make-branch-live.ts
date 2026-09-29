@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerMakeBranchLive(server: McpServer) {
   server.registerTool(
@@ -22,11 +23,9 @@ export function registerMakeBranchLive(server: McpServer) {
 
       if (!result.ok) {
         if (result.status === 404) {
-          return {
-            content: [{ type: "text" as const, text: `Branch not found: ${params.branch_id}` }],
-          };
+          return toolError(`Branch not found: ${params.branch_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const summary = result.data?.data ?? result.data;

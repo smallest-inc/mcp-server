@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { formatPaymentsApiError, paymentsApi } from "../payments-api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetPlans(server: McpServer) {
   server.registerTool(
@@ -20,7 +21,7 @@ export function registerGetPlans(server: McpServer) {
       const plansResult = await paymentsApi("GET", "/plans");
 
       if (!plansResult.ok) {
-        return { content: [{ type: "text" as const, text: formatPaymentsApiError(plansResult) }] };
+        return toolError(formatPaymentsApiError(plansResult));
       }
 
       const plans = plansResult.data?.data ?? plansResult.data;

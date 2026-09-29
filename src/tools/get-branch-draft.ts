@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetBranchDraft(server: McpServer) {
   server.registerTool(
@@ -21,7 +22,7 @@ export function registerGetBranchDraft(server: McpServer) {
     async (params) => {
       const branch = await resolveBranch(params.agent_id, params.branch_id);
       if (!branch.ok) {
-        return { content: [{ type: "text" as const, text: branch.message }] };
+        return toolError(branch.message);
       }
 
       if (!branch.value.hasOpenDraft) {
@@ -45,7 +46,7 @@ export function registerGetBranchDraft(server: McpServer) {
             content: [{ type: "text" as const, text: "No open draft on this branch — no unpublished changes." }],
           };
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

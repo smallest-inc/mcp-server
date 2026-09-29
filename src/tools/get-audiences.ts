@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetAudiences(server: McpServer) {
   server.registerTool(
@@ -14,7 +15,7 @@ export function registerGetAudiences(server: McpServer) {
       const result = await atomsApi("GET", "/audience");
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const audiences = result.data?.data ?? result.data;

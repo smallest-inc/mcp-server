@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { getAuthenticatedOrg } from "../auth.js";
+import { toolError } from "./tool-error.js";
 
 export function registerDuplicateAgent(server: McpServer) {
   server.registerTool(
@@ -32,11 +33,9 @@ export function registerDuplicateAgent(server: McpServer) {
 
       if (!result.ok) {
         if (result.status === 404) {
-          return {
-            content: [{ type: "text" as const, text: `Agent not found: ${params.agent_id}` }],
-          };
+          return toolError(`Agent not found: ${params.agent_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

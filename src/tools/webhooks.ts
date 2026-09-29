@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 /** Webhook event types the backend fires, keyed by the value it expects.
  *  - pre-conversation:    fired when a call starts
@@ -86,7 +87,7 @@ export function registerCreateWebhook(server: McpServer) {
 
       const result = await atomsApi("POST", "/webhook", body);
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const webhookId = result.data?.data ?? result.data;
@@ -130,7 +131,7 @@ export function registerGetWebhooks(server: McpServer) {
 
       const result = await atomsApi("GET", path);
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;
@@ -184,7 +185,7 @@ export function registerUpdateWebhook(server: McpServer) {
 
       const result = await atomsApi("PATCH", `/webhook/${encodeURIComponent(params.webhook_id)}`, body);
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       return {
@@ -212,7 +213,7 @@ export function registerDeleteWebhook(server: McpServer) {
     async (params) => {
       const result = await atomsApi("DELETE", `/webhook/${encodeURIComponent(params.webhook_id)}`);
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       return {
@@ -243,7 +244,7 @@ export function registerGetWebhookEvents(server: McpServer) {
         `/webhook/events?webhookId=${encodeURIComponent(params.webhook_id)}`
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;
@@ -278,7 +279,7 @@ export function registerAttachAgentWebhook(server: McpServer) {
         { webhookId: params.webhook_id, eventTypes }
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       return {
@@ -318,7 +319,7 @@ export function registerGetAgentWebhooks(server: McpServer) {
         `/agent/${encodeURIComponent(params.agent_id)}/webhook-subscriptions`
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;
@@ -343,7 +344,7 @@ export function registerDetachAgentWebhooks(server: McpServer) {
         `/agent/${encodeURIComponent(params.agent_id)}/webhook-subscriptions`
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       return {

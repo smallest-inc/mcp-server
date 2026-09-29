@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { wavesApi, formatWavesApiError } from "../waves-api.js";
+import { toolError } from "./tool-error.js";
 
 interface IWavesVoice {
   voiceId: string;
@@ -51,7 +52,7 @@ export function registerGetVoices(server: McpServer) {
       const result = await wavesApi("GET", "/voice/get-all-models");
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatWavesApiError(result) }] };
+        return toolError(formatWavesApiError(result));
       }
 
       let voices = (result.data?.voices ?? []) as IWavesVoice[];

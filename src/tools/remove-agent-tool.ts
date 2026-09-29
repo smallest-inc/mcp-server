@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { fetchAgentAndTools, persistAgentTools, DRAFT_HINT } from "./agent-tools-helper.js";
+import { toolError } from "./tool-error.js";
 
 export function registerRemoveAgentTool(server: McpServer) {
   server.registerTool(
@@ -22,7 +23,7 @@ export function registerRemoveAgentTool(server: McpServer) {
     async (params) => {
       const fetched = await fetchAgentAndTools(params.agent_id, params.branch_id);
       if (!fetched.ok) {
-        return { content: [{ type: "text" as const, text: fetched.message }] };
+        return toolError(fetched.message);
       }
 
       const tools = fetched.tools.filter((t) => t?.name !== params.name);
@@ -42,7 +43,7 @@ export function registerRemoveAgentTool(server: McpServer) {
 
       const persisted = await persistAgentTools(fetched.agent, fetched.branchId, tools);
       if (!persisted.ok) {
-        return { content: [{ type: "text" as const, text: persisted.message }] };
+        return toolError(persisted.message);
       }
 
       const result: Record<string, unknown> = {

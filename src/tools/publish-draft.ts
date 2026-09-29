@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { publishBranch, resolveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerPublishDraft(server: McpServer) {
   server.registerTool(
@@ -32,7 +33,7 @@ export function registerPublishDraft(server: McpServer) {
     async (params) => {
       const branch = await resolveBranch(params.agent_id, params.branch_id);
       if (!branch.ok) {
-        return { content: [{ type: "text" as const, text: branch.message }] };
+        return toolError(branch.message);
       }
 
       if (params.action === "discard") {
@@ -48,7 +49,7 @@ export function registerPublishDraft(server: McpServer) {
               ],
             };
           }
-          return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+          return toolError(formatApiError(result));
         }
 
         return {
@@ -60,7 +61,7 @@ export function registerPublishDraft(server: McpServer) {
 
       const published = await publishBranch(params.agent_id, branch.value, { label: params.label });
       if (!published.ok) {
-        return { content: [{ type: "text" as const, text: published.message }] };
+        return toolError(published.message);
       }
 
       const { state, isLive, revisionId, revisionNumber, reason } = published.value;
