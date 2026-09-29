@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runWithContext } from "../context.js";
-import { captureError, captureUpstreamError, initSentry, redact } from "../sentry.js";
+import { EXCLUDED_INTEGRATIONS, captureError, captureUpstreamError, initSentry, redact } from "../sentry.js";
 import { describeUpstreamError, onUpstreamError } from "../upstream-error.js";
 
 describe("Sentry redaction", () => {
@@ -118,6 +118,11 @@ describe("Sentry redaction", () => {
     for (const value of Object.values(out)) expect(value).toBe("[redacted]");
   });
 
+  it("leaves identifiers that merely contain sk_ alone", () => {
+    expect(redact("task_list and disk_usage")).toBe("task_list and disk_usage");
+    expect(redact("key=sk_live_abcdef123456")).toBe("key=sk_[redacted]");
+  });
+
   it("masks E.164 phone numbers, which upstream validation errors can echo", () => {
     expect(redact("invalid callee +919876543210 for agent a1")).toBe("invalid callee +[redacted] for agent a1");
     // A bare number with no + is not E.164 and is left alone (ids, timestamps).
@@ -147,9 +152,17 @@ describe("Sentry end to end", () => {
 
     // OnUnhandledRejection defaults to warn-and-continue, which silently
     // contradicts the invariant http.ts defends with its close() handlers.
-    for (const name of ["OnUnhandledRejection", "Http", "Express", "NodeFetch", "Console"]) {
+    for (const name of EXCLUDED_INTEGRATIONS) {
       expect(client?.getIntegrationByName(name), `${name} should be filtered out`).toBeUndefined();
     }
+    // Not vacuous: the names must still exist in the SDK's defaults, or a rename
+    // in an SDK upgrade would let the integration back in while this passes.
+    const defaults = Sentry.getDefaultIntegrations({}).map((i) => i.name);
+    for (const name of EXCLUDED_INTEGRATIONS.filter((n) => n !== "McpServer")) {
+      expect(defaults, `${name} is no longer a default integration name`).toContain(name);
+    }
+    // Tracing stays off, which is what keeps McpServer and the rest out.
+    expect(client?.getOptions().tracesSampleRate).toBeUndefined();
     // Not asserting listenerCount here: the test runner registers its own
     // unhandledRejection handler, so the integration set is the real signal.
   });

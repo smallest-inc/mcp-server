@@ -36,7 +36,9 @@ WORKDIR /app
 RUN printf '{"type":"module"}' > package.json
 
 # The commit SHA, so Sentry can name the build that introduced an error.
-ARG GIT_SHA=unknown
+# Empty by default, so a local or CI build reports no release rather than a
+# made-up "unknown" one.
+ARG GIT_SHA=
 ENV SENTRY_RELEASE=$GIT_SHA
 
 # node:22-alpine ships an unprivileged `node` user; use it rather than root.
