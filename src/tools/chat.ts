@@ -13,6 +13,20 @@ export function wssBaseUrl(apiUrl: string): string {
   return apiUrl.replace(/^http/i, "ws");
 }
 
+/**
+ * Kept back from the hosted deadline so the result is serialised and written
+ * before the deadline's own timeout error would be.
+ */
+const DEADLINE_RESERVE_MS = 5_000;
+
+/** Below this, a turn can't plausibly get a reply, so it isn't worth sending. */
+const MIN_TURN_BUDGET_MS = 3_000;
+
+/** Time left before the hosted deadline, or Infinity on stdio, which has none. */
+function budgetLeftMs(deadlineAt: number | undefined): number {
+  return deadlineAt === undefined ? Infinity : deadlineAt - Date.now() - DEADLINE_RESERVE_MS;
+}
+
 function renderTranscript(turns: ChatTurn[]): string {
   return turns.map((t) => `${t.role === "user" ? "User " : "Agent"}: ${t.text}`).join("\n");
 }
@@ -91,6 +105,8 @@ export function registerChatWithAgent(server: McpServer) {
         variables: params.variables,
       });
 
+      const deadlineAt = optionalContext()?.deadlineAt;
+      let turnsSent = 0;
       let connectError: string | null = null;
       let turnError: string | null = null;
       let greeting: string | null = null;
@@ -100,8 +116,21 @@ export function registerChatWithAgent(server: McpServer) {
         greeting = session.greeting;
 
         for (const message of params.messages) {
+          // Hosted, the request has a hard deadline, and hitting it throws away
+          // the transcript of a session that has already been charged. Spend
+          // against it instead: shorten a turn's wait to what's left, and stop
+          // with what we have once a turn couldn't fit.
+          const left = budgetLeftMs(deadlineAt);
+          if (left < MIN_TURN_BUDGET_MS) {
+            turnError =
+              `Stopped after ${turnsSent} of ${params.messages.length} turns: the hosted request ` +
+              "budget ran out. The transcript so far is below; split the script into shorter runs " +
+              "to cover the rest.";
+            break;
+          }
           try {
-            await client.send(message, params.reply_timeout_ms, params.settle_ms);
+            await client.send(message, Math.min(params.reply_timeout_ms, left), params.settle_ms);
+            turnsSent += 1;
           } catch (err) {
             turnError = err instanceof Error ? err.message : String(err);
             break; // session likely closed/errored — stop sending
@@ -111,7 +140,8 @@ export function registerChatWithAgent(server: McpServer) {
         // hangup (end_call) — before we tear the socket down, so we don't cut
         // the conversation short the way an immediate close would.
         if (!turnError) {
-          await client.waitForClose(params.settle_ms);
+          const left = budgetLeftMs(deadlineAt);
+          if (left > 0) await client.waitForClose(Math.min(params.settle_ms, left));
         }
       } catch (err) {
         connectError = err instanceof Error ? err.message : String(err);
@@ -135,7 +165,8 @@ export function registerChatWithAgent(server: McpServer) {
         agent_id: params.agent_id,
         call_id: client.callId || null,
         greeting,
-        turns_sent: params.messages.length,
+        turns_sent: turnsSent,
+        turns_requested: params.messages.length,
         ended_reason: client.closedReason,
         error: turnError,
         transcript: client.transcript,

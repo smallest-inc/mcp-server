@@ -17,7 +17,7 @@ let draining: () => void;
  * real rather than mocked.
  */
 function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = {}) {
-  const upstream: Array<{ url: string; authorization?: string }> = [];
+  const upstream: Array<{ url: string; authorization?: string; requestId?: string }> = [];
 
   vi.stubGlobal("fetch", async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
@@ -25,6 +25,7 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
     if (url.startsWith(base)) return realFetch(input, init);
 
     const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+    const requestId = (init?.headers as Record<string, string> | undefined)?.["X-Request-Id"];
 
     // Delay the FIRST of the tool's two sequential calls, so the second one
     // reads the context after the other caller has established its own.
@@ -35,7 +36,7 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
     // The account lookup is validated strictly, so it needs a real shape.
     if (url.includes("/account/get-account-details")) {
       const token = authorization?.replace("Bearer ", "") ?? "unknown";
-      upstream.push({ url, authorization });
+      upstream.push({ url, authorization, requestId });
       return {
         ok: true,
         status: 200,
@@ -59,7 +60,7 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
       };
     }
 
-    upstream.push({ url, authorization });
+    upstream.push({ url, authorization, requestId });
 
     return { ok: true, status: 200, json: async () => ({ data: [] }) };
   });
@@ -145,7 +146,7 @@ describe("hosted HTTP transport", () => {
   it("rejects a key console does not recognise", async () => {
     stubUpstreams({ consoleStatus: 401 });
 
-    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_bad" });
+    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_bad00000000000000000000000000000" });
 
     expect(res.status).toBe(401);
   });
@@ -153,7 +154,7 @@ describe("hosted HTTP transport", () => {
   it("does not report a console outage as a bad key", async () => {
     stubUpstreams({ consoleStatus: 503 });
 
-    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_live" });
+    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_live0000000000000000000000000000" });
 
     // 500, not 401 — otherwise every user is told to rotate a working key.
     expect(res.status).toBe(500);
@@ -162,7 +163,7 @@ describe("hosted HTTP transport", () => {
   it("initializes for a valid key", async () => {
     stubUpstreams();
 
-    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_live" });
+    const res = await rpc(INITIALIZE, { Authorization: "Bearer sk_live0000000000000000000000000000" });
     expect(res.status).toBe(200);
 
     const body = await res.text();
@@ -173,7 +174,7 @@ describe("hosted HTTP transport", () => {
   it("runs a tool, and sends the caller's own key upstream", async () => {
     const upstream = stubUpstreams();
 
-    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live" });
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
     expect(res.status).toBe(200);
 
     // The previous version of this test only sent `initialize`, which touches
@@ -181,18 +182,65 @@ describe("hosted HTTP transport", () => {
     // deleted. This one fails if the context is not established.
     expect(upstream.length).toBeGreaterThan(0);
     for (const call of upstream) {
-      expect(call.authorization).toBe("Bearer sk_live");
+      expect(call.authorization).toBe("Bearer sk_live0000000000000000000000000000");
     }
   });
 
+  it("forwards its request id upstream, so our logs join main-backend's", async () => {
+    const upstream = stubUpstreams();
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
+    const requestId = res.headers.get("X-Request-Id");
+
+    expect(requestId).toBeTruthy();
+    const atomsCalls = upstream.filter((c) => c.url.includes("/agent"));
+    expect(atomsCalls.length).toBeGreaterThan(0);
+    for (const call of atomsCalls) expect(call.requestId).toBe(requestId);
+  });
+
+  it("writes one access-log line per request, including successes", async () => {
+    stubUpstreams();
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
+    await res.text();
+    // "finish" fires after the last byte is handed to the socket.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const entries = lines
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e) => e?.event === "mcp_request");
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      requestId: res.headers.get("X-Request-Id"),
+      orgId: "org-for-sk_live0000000000000000000000000000",
+      method: "tools/call",
+      tool: "get_agents",
+      status: 200,
+    });
+    expect(typeof entries[0].durationMs).toBe("number");
+    // Tool arguments can carry prompts and phone numbers; they stay out of logs.
+    expect(JSON.stringify(entries[0])).not.toContain("arguments");
+  });
+
   it("keeps two concurrent callers' credentials apart", async () => {
-    const upstream = stubUpstreams({ delayFor: "sk_AAA" });
+    const upstream = stubUpstreams({ delayFor: "sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
 
     // Read both bodies to completion: fetch resolves when the SSE headers
     // arrive, so asserting before that would race the delayed caller.
     const responses = await Promise.all([
-      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_AAA" }),
-      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_BBB" }),
+      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }),
+      rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" }),
     ]);
     await Promise.all(responses.map((r) => r.text()));
 
@@ -205,10 +253,10 @@ describe("hosted HTTP transport", () => {
     const byKey = new Map<string | undefined, number>();
     for (const call of upstream) byKey.set(call.authorization, (byKey.get(call.authorization) ?? 0) + 1);
 
-    expect([...byKey.keys()].sort()).toEqual(["Bearer sk_AAA", "Bearer sk_BBB"]);
+    expect([...byKey.keys()].sort()).toEqual(["Bearer sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "Bearer sk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"]);
     // Both callers ran the same tool, so both must have made the same number of
     // upstream calls. A leaked context shows up as a lopsided split.
-    expect(byKey.get("Bearer sk_AAA")).toBe(byKey.get("Bearer sk_BBB"));
+    expect(byKey.get("Bearer sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toBe(byKey.get("Bearer sk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"));
   });
 
   it("answers a malformed body in JSON-RPC, without a stack trace", async () => {
@@ -219,7 +267,7 @@ describe("hosted HTTP transport", () => {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
-        Authorization: "Bearer sk_live",
+        Authorization: "Bearer sk_live0000000000000000000000000000",
       },
       body: "{not json",
     });
@@ -264,7 +312,7 @@ describe("hosted HTTP transport", () => {
       });
     });
 
-    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live" });
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
     const body = await res.text();
 
     // Previously this ended the stream with nothing in it: the client saw a
@@ -292,7 +340,7 @@ describe("hosted HTTP transport", () => {
       });
     });
 
-    await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live" }).then((r) => r.text());
+    await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" }).then((r) => r.text());
 
     // Answering the caller is not enough: without this the tool keeps running
     // against the Atoms API, holding an outbound socket until it gives up.
@@ -322,7 +370,7 @@ describe("hosted HTTP transport", () => {
         { ...CALL_GET_AGENTS, id: 101 },
         { ...CALL_GET_AGENTS, id: 102 },
       ],
-      { Authorization: "Bearer sk_live" }
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
     );
     const body = await res.text();
 

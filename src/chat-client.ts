@@ -102,6 +102,13 @@ export class AtomsChatClient {
     greetingWaitMs = 3000,
     connectTimeoutMs = 15000
   ): Promise<{ callId: string; sessionId: string; greeting: string | null }> {
+    // An abort that fired while auth or an earlier await was in flight never
+    // reaches the listener below, so a chargeable session would start and run
+    // to completion for a caller who has already gone.
+    if (this.opts.signal?.aborted) {
+      throw new Error("The request was cancelled before the chat session started");
+    }
+
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(this.connectUrl());
 

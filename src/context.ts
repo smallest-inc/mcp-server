@@ -46,6 +46,18 @@ export interface RequestContext {
    * holding an outbound socket until the upstream gives up.
    */
   signal?: AbortSignal;
+  /**
+   * Hosted only: the id this server gave the request. Forwarded upstream as
+   * X-Request-Id so main-backend, Waves and payment-service logs can be joined
+   * to ours.
+   */
+  requestId?: string;
+  /**
+   * Hosted only: when the request's hard deadline fires, in epoch ms. A tool
+   * that runs for minutes (chat_with_agent) spends against this so it can stop
+   * and return what it has, instead of being cut off with nothing.
+   */
+  deadlineAt?: number;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
