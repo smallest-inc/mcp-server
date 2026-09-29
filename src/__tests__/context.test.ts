@@ -482,6 +482,9 @@ describe("request-scoped credentials", () => {
 
   it("reaches a public Waves endpoint with no context at all", async () => {
     const captured = stubFetch();
+    // This asserts the prod default, so a WAVES_API_URL exported for a dev
+    // backend must not leak in from the developer's shell.
+    vi.stubEnv("WAVES_API_URL", "");
 
     // get_voices is documented as public. Demanding a credential here broke it
     // for anyone evaluating the server before pasting a key.

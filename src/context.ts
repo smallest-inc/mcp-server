@@ -99,6 +99,8 @@ export function localContextFromEnv(): RequestContext | null {
  * to production instead of wherever the operator pointed it.
  */
 export function basesFromEnv(): Omit<RequestContext, "apiKey"> {
+  // Trailing slashes are stripped because every caller appends a path that
+  // already starts with one — a base ending in "/" would produce "//agent".
   return {
     apiUrl: stripTrailingSlash(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
     wavesUrl: stripTrailingSlash(process.env.WAVES_API_URL || DEFAULT_WAVES_API_URL),
@@ -116,7 +118,5 @@ export function basesFromEnv(): Omit<RequestContext, "apiKey"> {
 export function contextFromEnv(): RequestContext | null {
   const apiKey = process.env.ATOMS_API_KEY;
   if (!apiKey) return null;
-  // Trailing slashes are stripped because every caller appends a path that
-  // already starts with one — a base ending in "/" would produce "//agent".
   return { apiKey, ...basesFromEnv() };
 }
