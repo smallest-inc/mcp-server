@@ -3,7 +3,8 @@ import type { AddressInfo } from "node:net";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../http.js";
+import { createApp, invalidUpstreamBase } from "../http.js";
+import { clearValidationCache } from "../verifier.js";
 
 const realFetch = globalThis.fetch;
 
@@ -116,6 +117,7 @@ const INITIALIZE = {
 beforeEach(async () => {
   vi.stubEnv("CONSOLE_BACKEND_URL", "https://console.example");
   vi.stubEnv("CONSOLE_API_KEY", "service-key");
+  vi.stubEnv("MCP_ALLOWED_ORIGINS", "https://allowed.example");
 
   const created = createApp();
   draining = created.startDraining;
@@ -126,6 +128,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Validations are cached per key, so one test's console answer must not
+  // decide the next one's.
+  clearValidationCache();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -141,6 +147,66 @@ describe("hosted HTTP transport", () => {
     // Clients rely on this header to know it is an auth problem rather than a
     // broken endpoint.
     expect(res.headers.get("www-authenticate")).toMatch(/Bearer/);
+    // With no OAuth metadata to discover, this text is the user's only hint.
+    expect((await res.json()).error_description).toMatch(/Authorization: Bearer sk_/);
+  });
+
+  it("refuses a browser origin that is not allowed, before any console call", async () => {
+    let consoleCalls = 0;
+    stubUpstreams();
+    const stubbed = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("console.example")) consoleCalls += 1;
+      return stubbed(input, init);
+    });
+
+    const res = await rpc(INITIALIZE, {
+      Authorization: "Bearer sk_live0000000000000000000000000000",
+      Origin: "https://evil.example",
+    });
+
+    // The Streamable HTTP spec makes this a MUST.
+    expect(res.status).toBe(403);
+    expect(consoleCalls).toBe(0);
+  });
+
+  it("lets a listed origin through", async () => {
+    stubUpstreams();
+
+    const res = await rpc(INITIALIZE, {
+      Authorization: "Bearer sk_live0000000000000000000000000000",
+      Origin: "https://allowed.example",
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  it("never hands an upstream 5xx body to the caller", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }),
+        };
+      }
+      return {
+        ok: false,
+        status: 502,
+        json: async () => ({ message: "connect ECONNREFUSED atoms-mainbackend.internal:4000" }),
+      };
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
+    const body = await res.text();
+
+    expect(body).toContain("the upstream service failed");
+    expect(body).not.toContain("atoms-mainbackend");
+    expect(body).not.toContain("4000");
   });
 
   it("rejects a key console does not recognise", async () => {
@@ -227,6 +293,7 @@ describe("hosted HTTP transport", () => {
       method: "tools/call",
       tool: "get_agents",
       status: 200,
+      aborted: false,
     });
     expect(typeof entries[0].durationMs).toBe("number");
     // Tool arguments can carry prompts and phone numbers; they stay out of logs.
@@ -236,7 +303,7 @@ describe("hosted HTTP transport", () => {
   it("keeps two concurrent callers' credentials apart", async () => {
     const upstream = stubUpstreams({ delayFor: "sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
 
-    // Read both bodies to completion: fetch resolves when the SSE headers
+    // Read both bodies to completion: fetch resolves when the headers
     // arrive, so asserting before that would race the delayed caller.
     const responses = await Promise.all([
       rpc(CALL_GET_AGENT_PROMPT, { Authorization: "Bearer sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }),
@@ -315,8 +382,9 @@ describe("hosted HTTP transport", () => {
     const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
     const body = await res.text();
 
-    // Previously this ended the stream with nothing in it: the client saw a
-    // 200 with a zero-byte body and waited forever.
+    // A JSON-RPC error, not an HTTP 504, which clients treat as a transport
+    // failure and may retry.
+    expect(res.status).toBe(200);
     expect(body).toContain("-32001");
     expect(body).toContain("too long");
   });
@@ -380,6 +448,30 @@ describe("hosted HTTP transport", () => {
     expect(body).toContain("102");
   });
 
+  it("rejects a batch on a protocol version that removed batching", async () => {
+    stubUpstreams();
+
+    const res = await rpc([CALL_GET_AGENTS, { ...CALL_GET_AGENTS, id: 3 }], {
+      Authorization: "Bearer sk_live0000000000000000000000000000",
+      "MCP-Protocol-Version": "2025-06-18",
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe(-32600);
+  });
+
+  it("does not advertise the framework", async () => {
+    const res = await realFetch(`${base}/health/live`);
+    expect(res.headers.get("x-powered-by")).toBeNull();
+  });
+
+  it("closes connections while draining, so a busy ALB socket stops carrying requests", async () => {
+    draining();
+
+    const res = await realFetch(`${base}/health/live`);
+    expect(res.headers.get("connection")).toBe("close");
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 
@@ -400,5 +492,30 @@ describe("hosted HTTP transport", () => {
     expect((await realFetch(`${base}/health/ready`)).status).toBe(503);
     // Liveness must stay up, or Kubernetes restarts the pod mid-drain.
     expect((await realFetch(`${base}/health/live`)).status).toBe(200);
+  });
+});
+
+describe("upstream base validation", () => {
+  it("accepts https, loopback and in-cluster http", () => {
+    expect(
+      invalidUpstreamBase({
+        A: "https://api.smallest.ai/atoms/v1",
+        B: "http://atoms-mainbackend",
+        C: "http://atoms-mainbackend.default.svc.cluster.local:4001/atoms/v1",
+        D: "http://localhost:4000",
+      })
+    ).toBeNull();
+  });
+
+  it("refuses http to a public host, which would send keys in cleartext", () => {
+    expect(invalidUpstreamBase({ ATOMS_API_URL: "http://api.smallest.ai/atoms/v1" })).toMatch(
+      /^ATOMS_API_URL must use https/
+    );
+  });
+
+  it("refuses a value with no scheme, which would fail every request", () => {
+    expect(invalidUpstreamBase({ WAVES_API_URL: "api.smallest.ai/waves/v1" })).toMatch(
+      /^WAVES_API_URL is not a valid URL/
+    );
   });
 });

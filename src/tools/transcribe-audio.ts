@@ -8,6 +8,12 @@ import { formatWavesApiError } from "../waves-api.js";
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
 const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
 
+/** Same header wavesApi sends, so Waves logs join ours for this tool too. */
+function requestIdHeader(): Record<string, string> {
+  const requestId = optionalContext()?.requestId;
+  return requestId ? { "X-Request-Id": requestId } : {};
+}
+
 export function registerTranscribeAudio(server: McpServer) {
   server.registerTool(
     "transcribe_audio",
@@ -89,6 +95,7 @@ export function registerTranscribeAudio(server: McpServer) {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${getApiKey()}`,
+            ...requestIdHeader(),
           },
           body: JSON.stringify({ url: params.audio_url }),
         });
@@ -134,6 +141,7 @@ export function registerTranscribeAudio(server: McpServer) {
           headers: {
             "Content-Type": contentType,
             Authorization: `Bearer ${getApiKey()}`,
+            ...requestIdHeader(),
           },
           body: new Uint8Array(fileBuffer),
         });
