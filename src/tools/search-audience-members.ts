@@ -37,6 +37,7 @@ export function registerSearchAudienceMembers(server: McpServer) {
 
       if (queryParts.length === 0) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

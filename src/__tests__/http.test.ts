@@ -727,6 +727,19 @@ describe("hosted HTTP transport", () => {
     expect(result.content[0].text).toContain("not found");
   });
 
+  it("marks input the tool refuses as a failed call too", async () => {
+    stubUpstreams();
+
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 13, method: "tools/call", params: { name: "add_agent_tool", arguments: { agent_id: "a1" } } },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+
+    const result = JSON.parse(await res.text()).result;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Provide either a `tools` array");
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

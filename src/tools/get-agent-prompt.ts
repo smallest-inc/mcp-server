@@ -59,6 +59,7 @@ export function registerGetAgentPrompt(server: McpServer) {
 
       if (!workflowResult.ok) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

@@ -39,6 +39,7 @@ export function registerConfigureCallActions(server: McpServer) {
     async (params) => {
       if (params.end_call === undefined && params.transfer_call_number === undefined) {
         return {
+          isError: true,
           content: [
             { type: "text" as const, text: "Provide end_call and/or transfer_call_number — nothing to change." },
           ],

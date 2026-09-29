@@ -152,6 +152,7 @@ export function registerAddAgentTool(server: McpServer) {
       } else {
         if (!params.name || !params.description || !params.url || !params.method) {
           return {
+            isError: true,
             content: [
               {
                 type: "text" as const,
@@ -181,6 +182,7 @@ export function registerAddAgentTool(server: McpServer) {
       for (const t of inputs) {
         if (seen.has(t.name)) {
           return {
+            isError: true,
             content: [{ type: "text" as const, text: `Duplicate tool name '${t.name}' in the tools array.` }],
           };
         }
@@ -190,6 +192,7 @@ export function registerAddAgentTool(server: McpServer) {
       const badEnum = findBadEnumParam(inputs);
       if (badEnum) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

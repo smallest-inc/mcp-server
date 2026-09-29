@@ -42,6 +42,7 @@ export function registerMakeCall(server: McpServer) {
       const agent = (agentResult.data?.data ?? agentResult.data) as IAgentDTO;
       if (agent.workflowType === "workflow_graph") {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

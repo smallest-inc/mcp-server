@@ -30,6 +30,7 @@ export function registerRemoveAgentTool(server: McpServer) {
       if (tools.length === fetched.tools.length) {
         const names = fetched.tools.map((t) => t?.name).filter(Boolean);
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,
