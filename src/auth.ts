@@ -15,8 +15,9 @@ interface CacheEntry {
 }
 
 /**
- * How long a resolved organization is trusted. This is also the window in which
- * a revoked key keeps working, so it stays short.
+ * How long a key's org mapping is trusted before it is looked up again. Not a
+ * revocation window: every upstream call still sends the key, and main-backend
+ * rejects a revoked one on that call.
  */
 const ORG_CACHE_TTL_MS = 5 * 60 * 1000;
 
