@@ -7,7 +7,8 @@ import { registerTools } from "./tools/index.js";
 
 // One process, one user: resolve the caller once and let every tool read it
 // through requireContext(). A hosted server sets this per request instead.
-setProcessDefault(contextFromEnv());
+const envContext = contextFromEnv();
+setProcessDefault(envContext && { ...envContext, localCaller: true });
 
 const server = new McpServer(
   {

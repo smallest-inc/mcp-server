@@ -252,11 +252,13 @@ describe("request-scoped credentials", () => {
     ).rejects.toThrow(/^Failed to verify API key: 502$/);
   });
 
-  it("does not pass an upstream 5xx body back to a hosted caller", async () => {
+  it("does not pass an upstream 5xx body back to a caller not marked local", async () => {
     stubFetch();
     const { formatApiError } = await import("../api.js");
 
-    const message = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1", hosted: true }, () =>
+    // No flag at all: an entrypoint that forgets to mark its callers must fail
+    // closed, since hosted this string reaches a stranger.
+    const message = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
       formatApiError({
         ok: false,
         status: 502,
@@ -264,7 +266,6 @@ describe("request-scoped credentials", () => {
       })
     );
 
-    // Hosted, this string reaches a stranger.
     expect(message).not.toContain("internal");
     expect(message).toBe("API error 502: the upstream service failed");
   });
@@ -274,8 +275,9 @@ describe("request-scoped credentials", () => {
 
     // stderr is invisible in most MCP clients, so this is the only place a
     // local user debugging their own setup would see why the call failed.
-    const message = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
-      formatApiError({ ok: false, status: 503, data: { message: "upstream warming up" } })
+    const message = runWithContext(
+      { apiKey: "key-a", apiUrl: "https://a.example/atoms/v1", localCaller: true },
+      () => formatApiError({ ok: false, status: 503, data: { message: "upstream warming up" } })
     );
 
     expect(message).toBe("API error 503: upstream warming up");
@@ -331,6 +333,37 @@ describe("request-scoped credentials", () => {
         data: { error: "API key does not belong to this organization" },
       })
     ).toBe("Payments API error 403: API key does not belong to this organization");
+  });
+
+  it("bounds every upstream call, since stdio has no request deadline", async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      signals.push(init.signal);
+      if (url.includes("/account/get-account-details")) {
+        return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "o" }] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    await runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+      atomsApi("GET", "/agent")
+    );
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true);
+  });
+
+  it("names the upstream that timed out instead of a bare abort", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.includes("/account/get-account-details")) {
+        return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "o" }] }) };
+      }
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    });
+
+    await expect(
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => atomsApi("GET", "/agent"))
+    ).rejects.toThrow("API did not respond within 50s");
   });
 
   it("throws when nothing established a context", () => {
