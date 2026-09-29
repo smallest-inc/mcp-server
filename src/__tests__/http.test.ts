@@ -733,3 +733,92 @@ describe("upstream base validation", () => {
     );
   });
 });
+
+describe("per-org concurrency cap", () => {
+  let capped: Server;
+  let cappedBase: string;
+  let release: () => void;
+
+  beforeEach(async () => {
+    vi.stubEnv("MCP_ORG_MAX_IN_FLIGHT", "2");
+    const created = createApp();
+    capped = await new Promise<Server>((resolve) => {
+      const s = created.app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    cappedBase = `http://127.0.0.1:${(capped.address() as AddressInfo).port}`;
+
+    // Console resolves the org from the token; every Atoms call waits until
+    // the test releases it, so requests stay in flight.
+    let gate!: () => void;
+    const held = new Promise<void>((resolve) => (gate = resolve));
+    release = gate;
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(cappedBase)) return realFetch(input, init);
+      const token = (init?.headers as Record<string, string> | undefined)?.Authorization?.replace("Bearer ", "");
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: `org-for-${token}`, data: { _id: "u" } }),
+        };
+      }
+      await held;
+      return { ok: true, status: 200, json: async () => ({ data: [] }) };
+    });
+  });
+
+  afterEach(async () => {
+    release();
+    await new Promise<void>((resolve) => capped.close(() => resolve()));
+  });
+
+  const call = (key: string) =>
+    realFetch(`${cappedBase}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify(CALL_GET_AGENTS),
+    });
+
+  const KEY_A = "sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const KEY_B = "sk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+  it("refuses an org's request past the cap with 429 and Retry-After", async () => {
+    const first = call(KEY_A);
+    const second = call(KEY_A);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const third = await call(KEY_A);
+    expect(third.status).toBe(429);
+    expect(third.headers.get("retry-after")).toBe("1");
+
+    release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+  });
+
+  it("does not let one org's load block another's", async () => {
+    const held = [call(KEY_A), call(KEY_A)];
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const other = call(KEY_B);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    release();
+
+    expect((await other).status).toBe(200);
+    await Promise.all(held);
+  });
+
+  it("frees the slot once a request ends", async () => {
+    release();
+    await (await call(KEY_A)).text();
+    await (await call(KEY_A)).text();
+
+    // Both finished, so the org is back to zero in flight.
+    expect((await call(KEY_A)).status).toBe(200);
+  });
+});

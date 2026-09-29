@@ -58,6 +58,16 @@ function requestTimeoutMs(): number {
   return positiveIntFromEnv("MCP_REQUEST_TIMEOUT_MS", 180_000);
 }
 
+/**
+ * Requests one org may have in flight on this pod. make_call, start_campaign
+ * and chat_with_agent spend credits, and an agent stuck in a loop fires them
+ * as fast as its client allows. Per pod and in memory, so it caps the worst
+ * case without Redis rather than enforcing an exact org-wide rate.
+ */
+function orgMaxInFlight(): number {
+  return positiveIntFromEnv("MCP_ORG_MAX_IN_FLIGHT", 10);
+}
+
 /** Upstream bases shared by every request. Only the caller's key varies. */
 function upstreamsFromEnv() {
   // basesFromEnv is the one definition of these vars and their defaults.
@@ -231,6 +241,40 @@ function checkOrigin(allowed: Set<string>): RequestHandler {
   };
 }
 
+/**
+ * Answers 429 once an org has orgMaxInFlight() requests open. Runs after auth,
+ * which resolves the org, and before the body parser, so a refused request is
+ * never buffered.
+ */
+function capOrgConcurrency(limit: number): RequestHandler {
+  const inFlight = new Map<string, number>();
+  return (req, res, next) => {
+    const orgId = req.auth?.extra?.orgId;
+    const key = typeof orgId === "string" ? orgId : req.auth?.clientId ?? "unknown";
+    const current = inFlight.get(key) ?? 0;
+    if (current >= limit) {
+      logEvent("mcp_org_concurrency_limited", { orgId: key, limit });
+      res.set("Retry-After", "1");
+      res.status(429).json({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32000, message: `Too many requests in flight for this organization (limit ${limit})` },
+      });
+      return;
+    }
+    inFlight.set(key, current + 1);
+    let released = false;
+    res.on("close", () => {
+      if (released) return;
+      released = true;
+      const remaining = (inFlight.get(key) ?? 1) - 1;
+      if (remaining > 0) inFlight.set(key, remaining);
+      else inFlight.delete(key);
+    });
+    next();
+  };
+}
+
 const AUTH_HINT =
   "Send your Atoms API key as Authorization: Bearer sk_... (Atoms console, Settings > API Keys)";
 
@@ -329,6 +373,7 @@ export function createApp() {
     checkOrigin(allowedOrigins),
     requireAuthorizationHeader,
     requireBearerAuth({ verifier }),
+    capOrgConcurrency(orgMaxInFlight()),
     parseJsonRpcBody,
     rejectBatchesOnNewProtocol,
     async (req, res) => {
