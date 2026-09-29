@@ -2,7 +2,14 @@ import * as Sentry from "@sentry/node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runWithContext } from "../context.js";
-import { EXCLUDED_INTEGRATIONS, captureError, captureUpstreamError, initSentry, redact } from "../sentry.js";
+import {
+  EXCLUDED_INTEGRATIONS,
+  captureError,
+  captureUpstreamError,
+  initSentry,
+  redact,
+  resetUpstreamReportThrottle,
+} from "../sentry.js";
 import { describeUpstreamError, onUpstreamError } from "../upstream-error.js";
 
 describe("Sentry redaction", () => {
@@ -141,6 +148,7 @@ describe("Sentry redaction", () => {
 
 describe("Sentry end to end", () => {
   afterEach(async () => {
+    resetUpstreamReportThrottle();
     await Sentry.close(0);
     vi.unstubAllEnvs();
   });
@@ -246,6 +254,20 @@ describe("Sentry end to end", () => {
     expect(wire).toMatch(/"tags":\{[^}]*"requestId":"req-9"/);
     expect(wire).toContain('"orgId":"org-9"');
     expect(wire).toContain('"tool":"make_call"');
+  });
+
+  it("sends at most one event a minute per upstream and status during an outage", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry();
+    const envelopes = interceptTransport();
+
+    for (let i = 0; i < 5; i += 1) captureUpstreamError("API", 502);
+    captureUpstreamError("API", 503);
+    await Sentry.flush(2_000);
+
+    const events = envelopes.filter((e) => e.includes('"fingerprint"'));
+    expect(events.filter((e) => e.includes('"502"'))).toHaveLength(1);
+    expect(events.filter((e) => e.includes('"503"'))).toHaveLength(1);
   });
 
   it("groups upstream 5xx by upstream and status, with the caller's ids", async () => {
