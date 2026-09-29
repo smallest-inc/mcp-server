@@ -1,10 +1,14 @@
+import { isHosted } from "./context.js";
+
 /**
  * Turn an upstream failure into something safe to hand the caller.
  *
  * A 4xx is the API telling the caller what they did wrong, so its own message
  * is the useful thing to pass on. A 5xx is our side failing, and its body
  * routinely names internal hosts and ports — hosted, that string goes straight
- * to a stranger. Those get a generic line, with the detail in the log.
+ * to a stranger, so it gets a generic line with the detail in the log. On stdio
+ * the caller is the key owner and stderr is invisible in most MCP clients, so
+ * they keep the upstream detail.
  *
  * The upstreams don't agree on a body shape: main-backend answers
  * `{ status: false, errors: ["Agent not found"] }`, payment-service answers
@@ -13,6 +17,9 @@
  */
 export function describeUpstreamError(label: string, status: number, data: unknown): string {
   if (status >= 500) {
+    if (!isHosted()) {
+      return `${label} error ${status}: ${extractDetail(data)}`;
+    }
     console.error(
       JSON.stringify({
         event: "upstream_error",
@@ -24,10 +31,10 @@ export function describeUpstreamError(label: string, status: number, data: unkno
     return `${label} error ${status}: the upstream service failed`;
   }
 
-  return `${label} error ${status}: ${extract4xxDetail(data)}`;
+  return `${label} error ${status}: ${extractDetail(data)}`;
 }
 
-function extract4xxDetail(data: unknown): string {
+function extractDetail(data: unknown): string {
   const body = data as
     | { errors?: unknown; message?: unknown; error?: unknown }
     | null
