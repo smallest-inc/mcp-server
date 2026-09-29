@@ -275,6 +275,50 @@ describe("request-scoped credentials", () => {
     ).toBe("API error 404: Agent not found");
   });
 
+  it("reads main-backend's real 4xx shape, which carries errors[] and no message", async () => {
+    const { formatApiError } = await import("../api.js");
+
+    // getApiErrorResponse in apps/main-backend/src/lib/utils.ts answers
+    // { status: false, errors: [...] } — there is no message or error field.
+    expect(
+      formatApiError({ ok: false, status: 404, data: { status: false, errors: ["Agent not found"] } })
+    ).toBe("API error 404: Agent not found");
+
+    expect(
+      formatApiError({
+        ok: false,
+        status: 400,
+        data: { status: false, errors: ["name is required", "voiceId is invalid"] },
+      })
+    ).toBe("API error 400: name is required; voiceId is invalid");
+  });
+
+  it("falls back to the raw 4xx body rather than dropping the reason", async () => {
+    const { formatApiError } = await import("../api.js");
+
+    // An unrecognised 4xx body is still meant for the caller, so it beats
+    // "no detail returned" when an agent has to correct its own request.
+    expect(formatApiError({ ok: false, status: 422, data: { detail: "bad field" } })).toBe(
+      'API error 422: {"detail":"bad field"}'
+    );
+
+    expect(formatApiError({ ok: false, status: 400, data: null })).toBe(
+      "API error 400: no detail returned"
+    );
+  });
+
+  it("formats payment-service's { error, message } shape too", async () => {
+    const { formatPaymentsApiError } = await import("../payments-api.js");
+
+    expect(
+      formatPaymentsApiError({
+        ok: false,
+        status: 403,
+        data: { error: "API key does not belong to this organization" },
+      })
+    ).toBe("Payments API error 403: API key does not belong to this organization");
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });

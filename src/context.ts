@@ -52,6 +52,10 @@ export function requireContext(purpose?: string): RequestContext {
   return context;
 }
 
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 /**
  * Build a context from the environment, or null when no key is set.
  *
@@ -59,10 +63,6 @@ export function requireContext(purpose?: string): RequestContext {
  * starts without a key and fails on the first tool call, so a user who is still
  * editing their MCP config sees a tool error instead of a server that won't boot.
  */
-function stripTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, "");
-}
-
 export function contextFromEnv(): RequestContext | null {
   const apiKey = process.env.ATOMS_API_KEY;
   if (!apiKey) return null;
