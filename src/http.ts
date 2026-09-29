@@ -12,7 +12,14 @@ import { basesFromEnv, optionalContext, runWithContext } from "./context.js";
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
-import { captureError, captureUpstreamError, flushSentry, initSentry, redact } from "./sentry.js";
+import {
+  captureError,
+  captureThrownToolError,
+  captureUpstreamError,
+  flushSentry,
+  initSentry,
+  redact,
+} from "./sentry.js";
 import { onUpstreamError } from "./upstream-error.js";
 import { createApiKeyVerifier } from "./verifier.js";
 
@@ -134,7 +141,7 @@ async function handleMcpRequest(
     logEvent("mcp_request_timeout", { requestId, timeoutMs });
     // Stop the upstream work too. Without this the tool keeps running against
     // the Atoms API long after the caller has been answered.
-    abort.abort(new Error("MCP request deadline exceeded"));
+    abort.abort(new Error(DEADLINE_EXCEEDED));
 
     // A JSON-RPC error for each id, not an HTTP 504: clients read a 504 as a
     // transport failure and some retry it, and a retried make_call is a second
@@ -167,6 +174,15 @@ async function handleMcpRequest(
 /** Longest method or tool list the access log keeps; names come from the caller. */
 const MAX_LOGGED_NAMES = 200;
 
+/** Abort reasons this file sets, so a tool error can be traced back to one. */
+const CLIENT_DISCONNECTED = "client disconnected";
+const DEADLINE_EXCEEDED = "MCP request deadline exceeded";
+
+/** Whether the request's signal was aborted because the client went away. */
+export function isClientHangUp(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true && (signal.reason as Error | undefined)?.message === CLIENT_DISCONNECTED;
+}
+
 /**
  * The MCP SDK catches an error thrown inside a tool and returns it as an
  * isError result, so a TypeError, a network failure or an upstream timeout in a
@@ -184,13 +200,18 @@ function reportThrownToolErrors(server: McpServer): void {
       try {
         return await handler(...args);
       } catch (error) {
-        const requestId = optionalContext()?.requestId;
+        const context = optionalContext();
+        const hungUp = isClientHangUp(context?.signal);
         logEvent("mcp_tool_threw", {
-          requestId,
+          requestId: context?.requestId,
+          orgId: context?.orgId,
           tool: name,
           error: redact(error instanceof Error ? error.message : String(error)),
+          ...(hungUp ? { clientHungUp: true } : {}),
         });
-        captureError(error, { source: "tool", tool: name, requestId });
+        // A caller that hung up (or pressed stop) is not a fault, and any key
+        // holder can produce them at will. A deadline still reports.
+        if (!hungUp) captureThrownToolError(error, name);
         throw error;
       }
     });
@@ -440,7 +461,7 @@ export function createApp() {
       // request's signal carry an Error whose stack held this response and its
       // server, which anything still listening kept alive.
       res.on("close", () => {
-        if (!res.writableFinished) abort.abort(new Error("client disconnected"));
+        if (!res.writableFinished) abort.abort(new Error(CLIENT_DISCONNECTED));
       });
 
       // The verifier resolved the key's own org and user; carry them so tools
