@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The Dockerfile pins node:22-alpine by digest, which never moves on its own;
+  # without this the base image would miss every Alpine and Node security patch.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Stay on the Node 22 line; a major bump is a deliberate change.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
