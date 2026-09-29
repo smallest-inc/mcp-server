@@ -563,16 +563,16 @@ describe("hosted HTTP transport", () => {
   it("does not offer text_to_speech, which can only write to a local disk", async () => {
     stubUpstreams();
 
-    await rpc(INITIALIZE, { Authorization: "Bearer sk_live" });
+    await rpc(INITIALIZE, { Authorization: "Bearer sk_live0000000000000000000000000000" });
     const res = await rpc(
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
-      { Authorization: "Bearer sk_live" }
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
     );
     const body = await res.text();
 
     // Hosted, "the filesystem" is a pod's ephemeral disk the caller can never
     // reach, so writing there and reporting success would be a lie.
-    const tools = JSON.parse(body.replace(/^.*?data: /s, "")).result.tools;
+    const tools = JSON.parse(body).result.tools;
     const names = tools.map((t: { name: string }) => t.name);
     expect(names).not.toContain("text_to_speech");
     // transcribe_audio stays: it already accepts audio_url.
@@ -589,7 +589,7 @@ describe("hosted HTTP transport", () => {
         method: "tools/call",
         params: { name: "transcribe_audio", arguments: { file_path: "~/Desktop/rec.wav", language: "en" } },
       },
-      { Authorization: "Bearer sk_live" }
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
     );
     const body = await res.text();
 
@@ -614,7 +614,7 @@ describe("hosted HTTP transport", () => {
           },
         },
       },
-      { Authorization: "Bearer sk_live" }
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
     );
 
     // Locally the URL wins and the path is ignored; hosted should behave the
@@ -627,9 +627,9 @@ describe("hosted HTTP transport", () => {
 
     const res = await rpc(
       { jsonrpc: "2.0", id: 5, method: "tools/list", params: {} },
-      { Authorization: "Bearer sk_live" }
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
     );
-    const tools = JSON.parse((await res.text()).replace(/^.*?data: /s, "")).result.tools;
+    const tools = JSON.parse(await res.text()).result.tools;
     const transcribe = tools.find((t: { name: string }) => t.name === "transcribe_audio");
 
     // The advertised contract must match the runtime one, or the model sends a
