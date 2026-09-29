@@ -5,6 +5,7 @@ import { runWithContext } from "../context.js";
 import {
   EXCLUDED_INTEGRATIONS,
   captureError,
+  captureThrownToolError,
   captureUpstreamError,
   initSentry,
   redact,
@@ -123,6 +124,15 @@ describe("Sentry redaction", () => {
     }) as Record<string, unknown>;
 
     for (const value of Object.values(out)) expect(value).toBe("[redacted]");
+  });
+
+  it("masks a real key even right after an escape sequence", () => {
+    const key = "sk_0123456789abcdef0123456789abcdef";
+    // The character before sk_ is alphanumeric in each of these, which the
+    // looser pattern's lookbehind lets through.
+    for (const text of [`Bearer%20${key}`, `auth%3D${key}`, `{"msg":"line\\n${key}"}`]) {
+      expect(redact(text)).not.toContain(key);
+    }
   });
 
   it("leaves identifiers that merely contain sk_ alone", () => {
@@ -268,6 +278,23 @@ describe("Sentry end to end", () => {
     const events = envelopes.filter((e) => e.includes('"fingerprint"'));
     expect(events.filter((e) => e.includes('"502"'))).toHaveLength(1);
     expect(events.filter((e) => e.includes('"503"'))).toHaveLength(1);
+  });
+
+  it("throttles a connection-level outage that throws on every call", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry();
+    const envelopes = interceptTransport();
+
+    const refused = () => Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    captureThrownToolError(refused(), "get_credit_balance");
+    captureThrownToolError(refused(), "get_invoices");
+    captureThrownToolError(refused(), "get_plans");
+    captureThrownToolError(new TypeError("x is not a function"), "get_agents");
+    await Sentry.flush(2_000);
+
+    const events = envelopes.filter((e) => e.includes('"type":"event"'));
+    // One for the outage, whichever tool hit it, and one for the unrelated bug.
+    expect(events).toHaveLength(2);
   });
 
   it("groups upstream 5xx by upstream and status, with the caller's ids", async () => {

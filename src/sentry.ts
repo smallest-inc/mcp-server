@@ -55,8 +55,19 @@ const MAX_DEPTH = 8;
 /** Beyond this an event is not worth reporting, and copying it is a liability. */
 const MAX_ENTRIES = 5_000;
 
+/**
+ * A key in console's minted shape, masked with no lookbehind. The lookbehind
+ * above keeps task_list readable, but it also lets a key through when the
+ * character before it ends an escape: Bearer%20sk_..., auth%3Dsk_..., or \nsk_...
+ * in an already-stringified body. This one runs first.
+ */
+const EXACT_KEY_PATTERN = /sk_[0-9a-f]{32}/gi;
+
 function maskString(value: string): string {
-  return value.replace(API_KEY_PATTERN, "sk_[redacted]").replace(PHONE_PATTERN, "+[redacted]");
+  return value
+    .replace(EXACT_KEY_PATTERN, "sk_[redacted]")
+    .replace(API_KEY_PATTERN, "sk_[redacted]")
+    .replace(PHONE_PATTERN, "+[redacted]");
 }
 
 export function redact(value: unknown): unknown {
@@ -224,14 +235,48 @@ export function captureError(
   }
 }
 
-const UPSTREAM_REPORT_INTERVAL_MS = 60_000;
+const REPORT_INTERVAL_MS = 60_000;
 
-/** Bounded by the few upstream and status pairs that exist. */
-const lastUpstreamReport = new Map<string, number>();
+/** Keys seen in the current window; capped so distinct messages can't grow it. */
+const lastReport = new Map<string, number>();
+const MAX_THROTTLE_KEYS = 1_000;
 
-/** Test seam: forget the upstream report throttle. */
+/**
+ * True for the first report of `key` in a minute. During an outage every call
+ * fails the same way, and an event per call would spend the Sentry quota
+ * exactly when it is needed; one event a minute still shows the outage.
+ */
+function firstInWindow(key: string): boolean {
+  const now = Date.now();
+  if (now - (lastReport.get(key) ?? -Infinity) < REPORT_INTERVAL_MS) return false;
+  if (lastReport.size >= MAX_THROTTLE_KEYS) {
+    for (const [k, at] of lastReport) if (now - at >= REPORT_INTERVAL_MS) lastReport.delete(k);
+    if (lastReport.size >= MAX_THROTTLE_KEYS) lastReport.clear();
+  }
+  lastReport.set(key, now);
+  return true;
+}
+
+/** Test seam: forget the report throttle. */
 export function resetUpstreamReportThrottle(): void {
-  lastUpstreamReport.clear();
+  lastReport.clear();
+}
+
+/**
+ * An error thrown inside a tool. Throttled like upstream 5xx: a connection-
+ * level outage (ECONNREFUSED, ENOTFOUND, the 50s bound) throws on every call,
+ * so the window is keyed by the cause code or message, not by the tool.
+ */
+export function captureThrownToolError(error: unknown, tool: string): void {
+  try {
+    const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!firstInWindow(`thrown:${typeof cause === "string" ? cause : message.slice(0, 120)}`)) return;
+    const context = optionalContext();
+    captureError(error, { source: "tool", tool, requestId: context?.requestId, orgId: context?.orgId });
+  } catch {
+    // Same reasoning as captureError.
+  }
 }
 
 /**
@@ -241,13 +286,7 @@ export function resetUpstreamReportThrottle(): void {
  */
 export function captureUpstreamError(upstream: string, status: number): void {
   try {
-    // One event per upstream and status a minute: during an outage every tool
-    // call fails the same way, and an event per call would spend the Sentry
-    // quota exactly when it is needed. The issue still shows the outage.
-    const key = `${upstream}:${status}`;
-    const now = Date.now();
-    if (now - (lastUpstreamReport.get(key) ?? -Infinity) < UPSTREAM_REPORT_INTERVAL_MS) return;
-    lastUpstreamReport.set(key, now);
+    if (!firstInWindow(`upstream:${upstream}:${status}`)) return;
 
     const context = optionalContext();
     Sentry.captureMessage(`${upstream} returned ${status}`, {

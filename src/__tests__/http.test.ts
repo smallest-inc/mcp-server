@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createApp, invalidUpstreamBase } from "../http.js";
+import { createApp, invalidUpstreamBase, isClientHangUp } from "../http.js";
 import { clearValidationCache } from "../verifier.js";
 
 const realFetch = globalThis.fetch;
@@ -876,3 +876,45 @@ describe("per-org concurrency cap", () => {
   });
 });
 
+describe("client hang-ups", () => {
+  it("tells a client hang-up apart from a deadline", () => {
+    const hungUp = new AbortController();
+    hungUp.abort(new Error("client disconnected"));
+    const deadline = new AbortController();
+    deadline.abort(new Error("MCP request deadline exceeded"));
+
+    expect(isClientHangUp(hungUp.signal)).toBe(true);
+    // A deadline is our limit being hit, which is worth an error event.
+    expect(isClientHangUp(deadline.signal)).toBe(false);
+    expect(isClientHangUp(new AbortController().signal)).toBe(false);
+    expect(isClientHangUp(undefined)).toBe(false);
+  });
+
+  it("marks the tool error of a caller who hung up, so it is not reported", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal.reason));
+      });
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+
+    const client = new AbortController();
+    const pending = rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" }, client.signal)
+      .catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    client.abort();
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const thrown = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((e) => e?.event === "mcp_tool_threw");
+    expect(thrown).toMatchObject({ tool: "get_agents", clientHungUp: true, orgId: "o" });
+  });
+});
