@@ -773,16 +773,20 @@ describe("per-org concurrency cap", () => {
     await new Promise<void>((resolve) => capped.close(() => resolve()));
   });
 
-  const call = (key: string) =>
+  const call = (key: string, body: unknown = CALL_GET_AGENTS, signal?: AbortSignal) =>
     realFetch(`${cappedBase}/mcp`, {
       method: "POST",
+      signal,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
         Authorization: `Bearer ${key}`,
       },
-      body: JSON.stringify(CALL_GET_AGENTS),
+      body: JSON.stringify(body),
     });
+
+  const settlesWithin = (p: Promise<Response>, ms: number) =>
+    Promise.race([p.then((r) => r.status), new Promise((resolve) => setTimeout(() => resolve("pending"), ms))]);
 
   const KEY_A = "sk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const KEY_B = "sk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
@@ -821,4 +825,30 @@ describe("per-org concurrency cap", () => {
     // Both finished, so the org is back to zero in flight.
     expect((await call(KEY_A)).status).toBe(200);
   });
+
+  it("counts every message in a batch, so one POST can't carry the cap many times over", async () => {
+    // No protocol header, so the batch itself is allowed; 3 calls against a cap of 2.
+    const batch = [1, 2, 3].map((id) => ({ ...CALL_GET_AGENTS, id }));
+    const res = await call(KEY_A, batch);
+
+    expect(res.status).toBe(429);
+  });
+
+  it("frees the slot when the client hangs up mid-request", async () => {
+    const hangUp = new AbortController();
+    const abandoned = call(KEY_A, CALL_GET_AGENTS, hangUp.signal).catch(() => undefined);
+    const held = call(KEY_A);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    hangUp.abort();
+    await abandoned;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // The abandoned slot is free, so this one is accepted and waits on the
+    // upstream like the others, rather than being refused at once.
+    expect(await settlesWithin(call(KEY_A), 150)).toBe("pending");
+    release();
+    await held;
+  });
 });
+
