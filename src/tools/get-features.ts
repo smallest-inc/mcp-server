@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { formatPaymentsApiError, paymentsApi } from "../payments-api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetFeatures(server: McpServer) {
   server.registerTool(
@@ -20,7 +21,7 @@ export function registerGetFeatures(server: McpServer) {
       const effectiveResult = await paymentsApi("GET", "/features/effective");
 
       if (!effectiveResult.ok) {
-        return { content: [{ type: "text" as const, text: formatPaymentsApiError(effectiveResult) }] };
+        return toolError(formatPaymentsApiError(effectiveResult));
       }
 
       const effective = effectiveResult.data?.data ?? effectiveResult.data;

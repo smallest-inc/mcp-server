@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetRevision(server: McpServer) {
   server.registerTool(
@@ -22,7 +23,7 @@ export function registerGetRevision(server: McpServer) {
     async (params) => {
       const branch = await resolveBranch(params.agent_id, params.branch_id);
       if (!branch.ok) {
-        return { content: [{ type: "text" as const, text: branch.message }] };
+        return toolError(branch.message);
       }
 
       const result = await atomsApi(
@@ -31,11 +32,9 @@ export function registerGetRevision(server: McpServer) {
       );
       if (!result.ok) {
         if (result.status === 404) {
-          return {
-            content: [{ type: "text" as const, text: `Revision not found on this branch: ${params.revision_id}` }],
-          };
+          return toolError(`Revision not found on this branch: ${params.revision_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

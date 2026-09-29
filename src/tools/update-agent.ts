@@ -12,6 +12,7 @@ import {
 import { resolveProModelId } from "../voice-catalog.js";
 import { DRAFT_HINT } from "./agent-tools-helper.js";
 import { DISPOSITION_METRIC_TYPES, type DispositionMetric, type IAgentDTO, type PostCallAnalyticsConfig } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 /** Disposition-metric identifiers: lowercase letters, digits, underscores. */
 const DISPOSITION_IDENTIFIER_RE = /^[a-z0-9_]+$/;
@@ -320,9 +321,9 @@ export function registerUpdateAgent(server: McpServer) {
       const agentCheck = await atomsApi("GET", `/agent/${encodeURIComponent(params.agent_id)}`);
       if (!agentCheck.ok) {
         if (agentCheck.status === 404) {
-          return { content: [{ type: "text" as const, text: `Agent not found: ${params.agent_id}` }] };
+          return toolError(`Agent not found: ${params.agent_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(agentCheck) }] };
+        return toolError(formatApiError(agentCheck));
       }
       const agent = (agentCheck.data?.data ?? agentCheck.data) as IAgentDTO;
       if (agent.workflowType === "workflow_graph") {
@@ -476,11 +477,11 @@ export function registerUpdateAgent(server: McpServer) {
       if (wantsDispositionChange) {
         const branch = await getBranch();
         if (!branch.ok) {
-          return { content: [{ type: "text" as const, text: branch.message }] };
+          return toolError(branch.message);
         }
         const resolved = await readResolvedConfig(params.agent_id, branch.value);
         if (!resolved.ok) {
-          return { content: [{ type: "text" as const, text: resolved.message }] };
+          return toolError(resolved.message);
         }
         const pca = resolved.value.config.postCallAnalyticsConfig as PostCallAnalyticsConfig | undefined;
         const applied = applyDispositionChanges(
@@ -489,7 +490,7 @@ export function registerUpdateAgent(server: McpServer) {
           params.remove_disposition_metrics ?? []
         );
         if (!applied.ok) {
-          return { content: [{ type: "text" as const, text: applied.message }] };
+          return toolError(applied.message);
         }
         body.postCallAnalyticsConfig = {
           ...(pca?.summaryPrompt !== undefined && { summaryPrompt: pca.summaryPrompt }),

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { fetchAgentAndTools, persistAgentTools, DRAFT_HINT } from "./agent-tools-helper.js";
+import { toolError } from "./tool-error.js";
 
 /**
  * Agent-LEVEL call actions — end_call and transfer_call. These live in the
@@ -47,7 +48,7 @@ export function registerConfigureCallActions(server: McpServer) {
       // Draft-aware read of the current agent-level tools (preserves api_call tools).
       const fetched = await fetchAgentAndTools(params.agent_id, params.branch_id);
       if (!fetched.ok) {
-        return { content: [{ type: "text" as const, text: fetched.message }] };
+        return toolError(fetched.message);
       }
 
       let tools: any[] = [...fetched.tools];
@@ -83,7 +84,7 @@ export function registerConfigureCallActions(server: McpServer) {
 
       const persisted = await persistAgentTools(fetched.agent, fetched.branchId, tools);
       if (!persisted.ok) {
-        return { content: [{ type: "text" as const, text: persisted.message }] };
+        return toolError(persisted.message);
       }
 
       return {

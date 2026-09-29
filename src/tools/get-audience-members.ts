@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetAudienceMembers(server: McpServer) {
   server.registerTool(
@@ -28,11 +29,9 @@ export function registerGetAudienceMembers(server: McpServer) {
 
       if (!result.ok) {
         if (result.status === 404) {
-          return {
-            content: [{ type: "text" as const, text: `Audience not found: ${params.audience_id}` }],
-          };
+          return toolError(`Audience not found: ${params.audience_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

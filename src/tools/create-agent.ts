@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveProModelId } from "../voice-catalog.js";
+import { toolError } from "./tool-error.js";
 
 export function registerCreateAgent(server: McpServer) {
   server.registerTool(
@@ -178,7 +179,7 @@ export function registerCreateAgent(server: McpServer) {
       const result = await atomsApi("POST", "/agent", body);
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const agentId = result.data?.data ?? result.data;

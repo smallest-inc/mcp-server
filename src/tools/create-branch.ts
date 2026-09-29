@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveLiveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerCreateBranch(server: McpServer) {
   server.registerTool(
@@ -23,7 +24,7 @@ export function registerCreateBranch(server: McpServer) {
       let sourceBranchId = params.source_branch_id;
       if (!sourceBranchId) {
         const live = await resolveLiveBranch(params.agent_id);
-        if (!live.ok) return { content: [{ type: "text" as const, text: live.message }] };
+        if (!live.ok) return toolError(live.message);
         sourceBranchId = live.value.branchId;
       }
 
@@ -32,7 +33,7 @@ export function registerCreateBranch(server: McpServer) {
         name: params.name,
       });
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const branch = result.data?.data ?? result.data;

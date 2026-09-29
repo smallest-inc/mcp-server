@@ -701,6 +701,32 @@ describe("hosted HTTP transport", () => {
     expect(thrown.requestId).toBe(res.headers.get("X-Request-Id"));
   });
 
+  it("marks a failed upstream call as a failed tool call", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({ status: false, errors: ["Agent not found"] }) };
+    });
+
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "get_agent", arguments: { agent_id: "nope" } } },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+
+    // Without isError the client shows success and the model reads the error
+    // as data instead of fixing its input.
+    const result = JSON.parse(await res.text()).result;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not found");
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

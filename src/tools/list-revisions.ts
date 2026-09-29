@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveBranch } from "../versioning.js";
+import { toolError } from "./tool-error.js";
 
 export function registerListRevisions(server: McpServer) {
   server.registerTool(
@@ -23,7 +24,7 @@ export function registerListRevisions(server: McpServer) {
     async (params) => {
       const branch = await resolveBranch(params.agent_id, params.branch_id);
       if (!branch.ok) {
-        return { content: [{ type: "text" as const, text: branch.message }] };
+        return toolError(branch.message);
       }
 
       const queryParts: string[] = [];
@@ -36,7 +37,7 @@ export function registerListRevisions(server: McpServer) {
         `/agent/${encodeURIComponent(params.agent_id)}/branches/${encodeURIComponent(branch.value.branchId)}/revisions${query}`
       );
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

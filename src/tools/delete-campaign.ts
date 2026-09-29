@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerDeleteCampaign(server: McpServer) {
   server.registerTool(
@@ -21,11 +22,9 @@ export function registerDeleteCampaign(server: McpServer) {
 
       if (!result.ok) {
         if (result.status === 404) {
-          return {
-            content: [{ type: "text" as const, text: `Campaign not found: ${params.campaign_id}` }],
-          };
+          return toolError(`Campaign not found: ${params.campaign_id}`);
         }
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       return {

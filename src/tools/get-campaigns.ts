@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
 import type { ICampaignDTO } from "../types.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetCampaigns(server: McpServer) {
   server.registerTool(
@@ -47,7 +48,7 @@ export function registerGetCampaigns(server: McpServer) {
       const result = await atomsApi("GET", `/campaign?${queryParams.toString()}`);
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

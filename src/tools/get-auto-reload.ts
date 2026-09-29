@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { formatPaymentsApiError, paymentsApi } from "../payments-api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerGetAutoReload(server: McpServer) {
   server.registerTool(
@@ -14,7 +15,7 @@ export function registerGetAutoReload(server: McpServer) {
       const result = await paymentsApi("GET", "/auto-reload");
 
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatPaymentsApiError(result) }] };
+        return toolError(formatPaymentsApiError(result));
       }
 
       const data = result.data?.data ?? result.data;

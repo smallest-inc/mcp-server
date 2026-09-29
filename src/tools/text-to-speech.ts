@@ -6,6 +6,7 @@ import { join } from "path";
 
 import { optionalContext, requireContext } from "../context.js";
 import { formatWavesApiError } from "../waves-api.js";
+import { toolError } from "./tool-error.js";
 
 const getApiKey = () => requireContext("for Waves API calls").apiKey;
 const wavesUrl = () => requireContext("for Waves API calls").wavesUrl;
@@ -96,14 +97,7 @@ export function registerTextToSpeech(server: McpServer) {
         } catch {
           errorData = { message: response.statusText };
         }
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: formatWavesApiError({ ok: false, status: response.status, data: errorData }),
-            },
-          ],
-        };
+        return toolError(formatWavesApiError({ ok: false, status: response.status, data: errorData }));
       }
 
       // Read audio bytes

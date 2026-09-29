@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
+import { toolError } from "./tool-error.js";
 
 export function registerDiff(server: McpServer) {
   server.registerTool(
@@ -19,7 +20,7 @@ export function registerDiff(server: McpServer) {
       const query = `?a=${encodeURIComponent(params.a)}&b=${encodeURIComponent(params.b)}`;
       const result = await atomsApi("GET", `/agent/${encodeURIComponent(params.agent_id)}/diff${query}`);
       if (!result.ok) {
-        return { content: [{ type: "text" as const, text: formatApiError(result) }] };
+        return toolError(formatApiError(result));
       }
 
       const data = result.data?.data ?? result.data;
