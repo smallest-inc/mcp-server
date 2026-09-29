@@ -49,7 +49,11 @@ export function registerTranscribeAudio(
           // Waves fetches this server side, so only web URLs, never file: or ftp:.
           .refine((value) => /^https?:\/\//i.test(value), "audio_url must be an http or https URL")
           .optional()
-          .describe("Publicly accessible URL of an audio file. Either file_path or audio_url is required."),
+          .describe(
+            localFilesystem
+              ? "Publicly accessible URL of an audio file. Either file_path or audio_url is required."
+              : "Publicly accessible URL of an audio file. Required on this server."
+          ),
         language: z
           .string()
           .describe(
@@ -100,7 +104,9 @@ export function registerTranscribeAudio(
           content: [
             {
               type: "text" as const,
-              text: "Either file_path or audio_url is required. For files uploaded to the chat, ask the user for the actual path on their machine or a URL instead.",
+              text: localFilesystem
+                ? "Either file_path or audio_url is required. For files uploaded to the chat, ask the user for the actual path on their machine or a URL instead."
+                : "audio_url is required: pass a publicly reachable URL of the audio. Local file paths are not readable on the hosted server.",
             },
           ],
         };
