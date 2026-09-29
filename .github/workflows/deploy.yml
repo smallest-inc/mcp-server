@@ -29,8 +29,8 @@ on:
           - prod
         default: "dev"
 
+# Least privilege by default; only build-and-push needs an OIDC token.
 permissions:
-  id-token: write
   contents: read
 
 # Two dispatches close together would race on the smallest-infra checkout: the
@@ -49,6 +49,9 @@ jobs:
     # workflow file from the selected ref, so the real control is the
     # environment's protection rules, which have to be configured in the repo.
     environment: ${{ github.event.inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       image_tag: ${{ steps.set-vars.outputs.image_tag }}
       environment: ${{ steps.set-vars.outputs.environment }}
@@ -72,8 +75,11 @@ jobs:
       - name: Configure AWS credentials (ap-south-1)
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
-          # Prod gets its own role, so a dev dispatch can never push to the prod
-          # registry even before environment protection is configured.
+          # Prod gets its own role, which only this repo's prod environment can
+          # assume and which can only push to prod/mcp. That separates the
+          # workflow as written; it does not stop an edited copy on another
+          # branch from using the dev role, whose ECR scope is wider. The prod
+          # environment's reviewers and main-only branch rule are what gate that.
           role-to-assume: ${{ github.event.inputs.environment == 'prod' && 'arn:aws:iam::301490598848:role/smallest-prod-mcp-deploy-role' || 'arn:aws:iam::301490598848:role/smallest-dev-iam-github-eks-role' }}
           aws-region: ap-south-1
 
@@ -153,9 +159,12 @@ jobs:
           Triggered by: ${{ github.repository }}@${TAG_SHA}
           Workflow: ${{ github.workflow }}
           Actor: ${{ github.actor }}"
-            # Another deploy may have landed between checkout and push.
-            git pull --rebase origin HEAD
-            git push
+            # Another service's deploy may land between checkout and push.
+            for attempt in 1 2 3; do
+              git pull --rebase origin HEAD && git push && break
+              if [ "${attempt}" = 3 ]; then exit 1; fi
+              sleep $((attempt * 5))
+            done
           fi
 
   # The run used to go green once the tag commit landed, even if ArgoCD never
@@ -170,16 +179,23 @@ jobs:
       - name: Wait for the service to answer
         env:
           MCP_PUBLIC_URL: ${{ vars[format('MCP_PUBLIC_URL_{0}', needs.build-and-push.outputs.environment == 'prod' && 'PROD' || 'DEV')] }}
+          ENVIRONMENT: ${{ needs.build-and-push.outputs.environment }}
         run: |
           if [ -z "${MCP_PUBLIC_URL}" ]; then
-            echo "::warning::MCP_PUBLIC_URL for this environment is not set; skipping the post-deploy check"
+            # Repo-level variables only: this job has no environment, so an
+            # environment variable of the same name is invisible here.
+            if [ "${ENVIRONMENT}" = "prod" ]; then
+              echo "::error::Repository variable MCP_PUBLIC_URL_PROD is not set, so prod cannot be verified"
+              exit 1
+            fi
+            echo "::warning::Repository variable MCP_PUBLIC_URL_DEV is not set; skipping the post-deploy check"
             exit 0
           fi
           base="${MCP_PUBLIC_URL%/}"
           for attempt in $(seq 1 40); do
-            ready=$(curl -s -o /dev/null -w '%{http_code}' "${base}/health/ready" || true)
+            ready=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "${base}/health/ready" || true)
             if [ "${ready}" = "200" ]; then
-              headers=$(curl -s -D - -o /dev/null -X POST -H 'Content-Type: application/json' -d '{}' "${base}/mcp" || true)
+              headers=$(curl -s --max-time 10 -D - -o /dev/null -X POST -H 'Content-Type: application/json' -d '{}' "${base}/mcp" || true)
               if echo "${headers}" | head -1 | grep -q ' 401' && echo "${headers}" | grep -qi '^www-authenticate: Bearer'; then
                 echo "Service is ready and requires a key"
                 exit 0

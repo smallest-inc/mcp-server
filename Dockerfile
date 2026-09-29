@@ -46,7 +46,7 @@ EXPOSE 8092
 
 # --no-experimental-detect-module on purpose: without it Node >= 22.7 infers ESM
 # from the syntax, so the package.json above would be decorative and a base
-# image downgrade — which engines ">=18" permits — would be the thing that
+# image downgrade — which engines ">=20" permits — would be the thing that
 # breaks, far from this file. With the flag, the declaration is load-bearing
 # here and in CI.
 CMD ["node", "--no-experimental-detect-module", "http.js"]
