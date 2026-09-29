@@ -6,7 +6,7 @@ MCP server for the [Smallest AI](https://smallest.ai) platform. Manage agents, d
 
 ### Option A: npm (recommended)
 
-Requires Node.js 18+. Add this to your MCP config (`~/.cursor/mcp.json` for Cursor, `claude_desktop_config.json` for Claude Desktop):
+Requires Node.js 20+. Add this to your MCP config (`~/.cursor/mcp.json` for Cursor, `claude_desktop_config.json` for Claude Desktop):
 
 ```json
 {
