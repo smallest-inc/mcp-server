@@ -8,7 +8,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type Request, type RequestHandler, type Response } from "express";
 
-import { basesFromEnv, runWithContext } from "./context.js";
+import { basesFromEnv, optionalContext, runWithContext } from "./context.js";
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
@@ -35,7 +35,8 @@ function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  // Below 1 floors to 0, and a 0ms deadline times every request out at once.
+  if (!Number.isFinite(parsed) || parsed < 1) {
     logEvent("invalid_env_value", { name, value: raw.slice(0, 40), using: fallback });
     return fallback;
   }
@@ -100,15 +101,16 @@ async function handleMcpRequest(
     void server.close().catch(() => undefined);
   };
 
+  // Tags every event below with the id on this request's access line.
+  const requestId = optionalContext()?.requestId;
+
   // Protocol-level failures (bad protocol version, oversized batch, malformed
   // JSON-RPC) are reported through these and would otherwise be silent.
-  transport.onerror = (error) => logEvent("mcp_transport_error", { error: error.message });
-  server.server.onerror = (error) => logEvent("mcp_server_error", { error: error.message });
-
-  res.on("close", closeQuietly);
+  transport.onerror = (error) => logEvent("mcp_transport_error", { requestId, error: error.message });
+  server.server.onerror = (error) => logEvent("mcp_server_error", { requestId, error: error.message });
 
   const deadline = setTimeout(() => {
-    logEvent("mcp_request_timeout", { timeoutMs });
+    logEvent("mcp_request_timeout", { requestId, timeoutMs });
     // Stop the upstream work too. Without this the tool keeps running against
     // the Atoms API long after the caller has been answered.
     abort.abort(new Error("MCP request deadline exceeded"));
@@ -124,6 +126,15 @@ async function handleMcpRequest(
     closeQuietly();
   }, timeoutMs);
 
+  // Clear the deadline here too: on a disconnect the transport drops the
+  // pending reply, handleRequest never settles, and the finally below never
+  // runs, so the timer would hold this server for the full deadline and then
+  // log a timeout for a request that is long gone.
+  res.on("close", () => {
+    clearTimeout(deadline);
+    closeQuietly();
+  });
+
   try {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
@@ -131,6 +142,9 @@ async function handleMcpRequest(
     clearTimeout(deadline);
   }
 }
+
+/** Longest method or tool list the access log keeps; names come from the caller. */
+const MAX_LOGGED_NAMES = 200;
 
 /** Methods and tool names in a JSON-RPC body, for the access log. Never arguments. */
 function describeRpc(body: unknown): { method: string; tool?: string } {
@@ -142,8 +156,8 @@ function describeRpc(body: unknown): { method: string; tool?: string } {
     .filter((c) => c.method === "tools/call" && typeof c.params?.name === "string")
     .map((c) => c.params!.name as string);
   return {
-    method: methods.join(",") || "?",
-    ...(tools.length ? { tool: tools.join(",") } : {}),
+    method: methods.join(",").slice(0, MAX_LOGGED_NAMES) || "?",
+    ...(tools.length ? { tool: tools.join(",").slice(0, MAX_LOGGED_NAMES) } : {}),
   };
 }
 
@@ -335,7 +349,12 @@ export function createApp() {
 
       const abort = new AbortController();
       // A client that hangs up should stop the work it asked for.
-      res.on("close", () => abort.abort(new Error("client disconnected")));
+      // Only when it did hang up. Aborting after a normal finish too made every
+      // request's signal carry an Error whose stack held this response and its
+      // server, which anything still listening kept alive.
+      res.on("close", () => {
+        if (!res.writableFinished) abort.abort(new Error("client disconnected"));
+      });
 
       // The verifier resolved the key's own org and user; carry them so tools
       // don't re-derive the org from the key creator's org list.
@@ -401,6 +420,8 @@ export function createApp() {
 
 /** Loopback and in-cluster service names have no public hop, so http is fine there. */
 function isInternalHost(hostname: string): boolean {
+  // IPv6 literals have no dots, so without this any of them would pass.
+  if (hostname.startsWith("[")) return hostname === "[::1]";
   return (
     hostname === "localhost" ||
     hostname === "127.0.0.1" ||
@@ -425,6 +446,8 @@ export function invalidUpstreamBase(bases: Record<string, string>): string | nul
     } catch {
       return `${name} is not a valid URL`;
     }
+    // fetch refuses a URL with credentials in it, so every call would fail.
+    if (url.username || url.password) return `${name} must not contain credentials`;
     if (url.protocol === "https:") continue;
     if (url.protocol === "http:" && isInternalHost(url.hostname)) continue;
     return `${name} must use https unless it points at localhost or an in-cluster service`;
@@ -487,11 +510,12 @@ export function startServer(port: number): Server {
       process.exit(0);
     });
 
-    // server.close() waits for every connection to end. Node 18 does not reap
-    // idle keep-alive sockets on its own, and keepAliveTimeout is 250s, so one
-    // idle ALB connection would stall the callback past the drain budget and
-    // make every rolling deploy force-exit.
+    // server.close() waits for every connection to end, and keepAliveTimeout is
+    // 250s. A request already in flight at SIGTERM was answered keep-alive, so
+    // its socket goes idle only after this point; reaping once would leave it
+    // open and force-exit every rolling deploy. Keep reaping until close.
     server.closeIdleConnections();
+    setInterval(() => server.closeIdleConnections(), 1_000).unref();
   };
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
