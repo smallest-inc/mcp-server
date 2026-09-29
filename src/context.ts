@@ -18,11 +18,12 @@ export interface RequestContext {
   /** Atoms API base, no trailing slash. */
   apiUrl: string;
   /**
-   * True when the caller is a stranger reaching us over the hosted transport.
-   * On stdio the caller is the key owner on their own machine, so upstream
-   * detail that would be unsafe to show a stranger is theirs to see.
+   * True only for the stdio entrypoint, where the caller is the key owner on
+   * their own machine and upstream detail is theirs to see. Anything else is
+   * treated as a stranger, so an entrypoint that forgets to set this fails
+   * closed instead of leaking internal hosts.
    */
-  hosted?: boolean;
+  localCaller?: boolean;
 }
 
 const store = new AsyncLocalStorage<RequestContext>();
@@ -58,9 +59,9 @@ export function requireContext(purpose?: string): RequestContext {
   return context;
 }
 
-/** Whether the current caller came in over the hosted transport. Never throws. */
+/** Whether the current caller may be a stranger. Never throws; defaults to true. */
 export function isHosted(): boolean {
-  return (store.getStore() ?? processDefault)?.hosted === true;
+  return (store.getStore() ?? processDefault)?.localCaller !== true;
 }
 
 function stripTrailingSlash(url: string): string {
