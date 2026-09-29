@@ -18,7 +18,9 @@ on:
       - "!src/sentry.ts"
       - "!src/__tests__/**"
       - "package.json"
-      - "package-lock.json"
+      # Not package-lock.json: npm never publishes it, so a lockfile-only bump
+      # (every weekly Dependabot PR, dev tools included) changes nothing an npx
+      # user installs. A runtime range change also touches package.json above.
       # esbuild reads it, so it changes the published bundle.
       - "tsconfig.json"
       - ".github/workflows/release.yml"
@@ -130,7 +132,7 @@ jobs:
         run: npx esbuild src/index.ts --platform=node --bundle --format=esm --outfile=dist/index.mjs --packages=external
 
       - name: Build binaries with pkg
-        run: npx @yao-pkg/pkg dist/index.mjs --targets ${{ matrix.targets }} --output dist/smallest-mcp --compress GZip
+        run: npx @yao-pkg/pkg@6.23.0 dist/index.mjs --targets ${{ matrix.targets }} --output dist/smallest-mcp --compress GZip
 
       - name: Rename binaries
         shell: bash
