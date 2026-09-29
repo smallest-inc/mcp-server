@@ -119,7 +119,7 @@ beforeEach(async () => {
   const created = createApp();
   draining = created.startDraining;
   server = await new Promise<Server>((resolve) => {
-    const s = created.app.listen(0, () => resolve(s));
+    const s = created.app.listen(0, "127.0.0.1", () => resolve(s));
   });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

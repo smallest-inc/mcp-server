@@ -31,6 +31,16 @@ export interface RequestContext {
    */
   localCaller?: boolean;
   /**
+   * The organization the API key belongs to, when the caller was authenticated
+   * by a verifier that already resolved it. Hosted, this is console's
+   * organizationId for the key; without it, getAuthenticatedOrg falls back to
+   * the key creator's first organization, which is a different org whenever the
+   * key does not belong to their first one.
+   */
+  orgId?: string;
+  /** The user the API key belongs to, resolved alongside orgId. */
+  userId?: string;
+  /**
    * Aborted when the caller's request ends or hits its deadline. Upstream calls
    * honour it, so a tool that outlives its request stops doing work instead of
    * holding an outbound socket until the upstream gives up.

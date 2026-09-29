@@ -8,7 +8,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express, { type Request, type RequestHandler, type Response } from "express";
 
-import { DEFAULT_ATOMS_API_URL, DEFAULT_PAYMENTS_API_URL, DEFAULT_WAVES_API_URL, runWithContext } from "./context.js";
+import { basesFromEnv, runWithContext } from "./context.js";
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
@@ -24,10 +24,28 @@ import { createApiKeyVerifier } from "./verifier.js";
 const KEEP_ALIVE_TIMEOUT_MS = 250_000;
 const HEADERS_TIMEOUT_MS = 251_000;
 
+/**
+ * Read a positive-integer env var, or fall back to the default.
+ *
+ * `Number("")` is 0 and `Number("180s")` is NaN, and a Helm template renders an
+ * unset value as "". Passed to setTimeout both fire after about 1ms, so every
+ * request would time out immediately. Anything unusable is ignored and logged.
+ */
+function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logEvent("invalid_env_value", { name, value: raw.slice(0, 40), using: fallback });
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
 /** Budget for in-flight tool calls to finish once SIGTERM arrives. Must stay under
  *  terminationGracePeriodSeconds minus preStopSleepSeconds. */
 function drainTimeoutMs(): number {
-  return Number(process.env.HTTP_DRAIN_TIMEOUT_MS ?? 185_000);
+  return positiveIntFromEnv("HTTP_DRAIN_TIMEOUT_MS", 185_000);
 }
 
 /**
@@ -36,17 +54,13 @@ function drainTimeoutMs(): number {
  * mean neither the ALB idle timeout nor keepAliveTimeout would ever reap it.
  */
 function requestTimeoutMs(): number {
-  return Number(process.env.MCP_REQUEST_TIMEOUT_MS ?? 180_000);
+  return positiveIntFromEnv("MCP_REQUEST_TIMEOUT_MS", 180_000);
 }
 
 /** Upstream bases shared by every request. Only the caller's key varies. */
 function upstreamsFromEnv() {
-  const strip = (u: string) => u.replace(/\/+$/, "");
-  return {
-    apiUrl: strip(process.env.ATOMS_API_URL || DEFAULT_ATOMS_API_URL),
-    wavesUrl: strip(process.env.WAVES_API_URL || DEFAULT_WAVES_API_URL),
-    paymentsUrl: strip(process.env.PAYMENTS_API_URL || DEFAULT_PAYMENTS_API_URL),
-  };
+  // basesFromEnv is the one definition of these vars and their defaults.
+  return basesFromEnv();
 }
 
 /**
@@ -225,8 +239,13 @@ export function createApp() {
     // A client that hangs up should stop the work it asked for.
     res.on("close", () => abort.abort(new Error("client disconnected")));
 
+    // The verifier resolved the key's own org and user; carry them so tools
+    // don't re-derive the org from the key creator's org list.
+    const orgId = typeof auth?.extra?.orgId === "string" ? auth.extra.orgId : undefined;
+    const userId = typeof auth?.extra?.userId === "string" ? auth.extra.userId : undefined;
+
     try {
-      await runWithContext({ apiKey, ...upstreams, signal: abort.signal }, () =>
+      await runWithContext({ apiKey, ...upstreams, orgId, userId, signal: abort.signal }, () =>
         handleMcpRequest(req, res, abort)
       );
     } catch (error) {
@@ -318,5 +337,5 @@ export function startServer(port: number): Server {
 // Start only when run directly (the image's CMD), never on import — a test or
 // tool importing this module must not bind a port as a side effect.
 if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
-  startServer(Number(process.env.PORT ?? 8092));
+  startServer(positiveIntFromEnv("PORT", 8092));
 }
