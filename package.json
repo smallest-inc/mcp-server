@@ -33,9 +33,9 @@
     "build:http": "esbuild src/http.ts --platform=node --bundle --format=esm --outdir=dist --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __mcpCreateRequire } from 'node:module';\nvar require = globalThis.require ?? __mcpCreateRequire(import.meta.url);\""
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "ws": "^8.18.0",
-    "zod": "^3.24.1"
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "ws": "^8.22.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@sentry/node": "^11.0.0",
