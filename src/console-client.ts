@@ -19,7 +19,19 @@ export interface ValidatedKey {
 
 export type ValidationResult =
   | { ok: true; value: ValidatedKey }
-  | { ok: false; unavailable: boolean; error: string };
+  | {
+      ok: false;
+      unavailable: boolean;
+      error: string;
+      /**
+       * Set when console accepted the key but the account behind it is blocked.
+       * Rotating the key doesn't help, so this must not read as a bad key.
+       */
+      blocked?: { message: string };
+    };
+
+/** console-types ACCOUNT_BLOCKED_ERROR_TYPE — the wire value, not the constant's name. */
+const ACCOUNT_BLOCKED_ERROR_TYPE = "account-blocked";
 
 /** Console must answer quickly — it sits in front of every tool call. */
 const CONSOLE_TIMEOUT_MS = 5_000;
@@ -53,10 +65,6 @@ export function consoleConfigFromEnv(): ConsoleConfig | null {
   return { url: url.replace(/\/+$/, ""), serviceApiKey };
 }
 
-/**
- * Does the error body look like console's own application response rather than
- * a gateway's? Console answers with { success, ... }; an edge rejection does not.
- */
 async function readJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -65,6 +73,10 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * Does the error body look like console's own application response rather than
+ * a gateway's? Console answers with { success, ... }; an edge rejection does not.
+ */
 function hasConsoleShape(body: unknown): boolean {
   // A boolean specifically. `{success: null}` or `{success: "nope"}` from a
   // gateway would otherwise be read as console's own verdict and blame the
@@ -127,8 +139,15 @@ export async function validateApiKey(
   // rejection does not. Anything we cannot read that way is treated as ours,
   // because that failure mode is recoverable by us and the other is not.
   //
-  // TODO: confirm console's actual status and body contract for a revoked user
-  // key versus a rejected X-API-Key, and replace this inference with it.
+  // Console's contract (atoms-platform apps/console-backend):
+  // - revoked or unknown user key: 401 { success: false, error: "Unauthorized:
+  //   Invalid token" } (routes/user/user.controller.ts, httpGetUserDetailsFromToken)
+  // - wrong service key: 401 { status: false, errors: ["Invalid Admin API key"] }
+  //   from verifyAdminApiKey (middleware/auth.middleware.ts). No `success`
+  //   field, so it is read as ours.
+  // - blocked user, email domain or org: 403 { success: false, error_type:
+  //   "account-blocked", message } from the same handler's block gate.
+  // - handler crash: 500 { success: false } — not ambiguous, read as unavailable.
   if (!response.ok) {
     // Read the body unconditionally. undici holds the connection until the body
     // is consumed, so short-circuiting on a 500 accumulates sockets during
@@ -136,6 +155,19 @@ export async function validateApiKey(
     const errorBody = await readJson(response);
     const ambiguous = response.status === 401 || response.status === 403;
     const looksLikeConsoleRejection = ambiguous && hasConsoleShape(errorBody);
+
+    if (response.status === 403 && hasConsoleShape(errorBody)) {
+      const body = errorBody as { error_type?: unknown; message?: unknown };
+      if (body.error_type === ACCOUNT_BLOCKED_ERROR_TYPE) {
+        // Console's message is the generic one it gives every client; the
+        // internal block reason stays in console's own log.
+        const message =
+          typeof body.message === "string" && body.message
+            ? body.message
+            : "This account has been blocked.";
+        return { ok: false, unavailable: false, error: "account blocked", blocked: { message } };
+      }
+    }
 
     if (!looksLikeConsoleRejection) {
       // Distinct event: a spike of these across every organization means our
