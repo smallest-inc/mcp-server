@@ -141,7 +141,7 @@ The hosted HTTP server (`dist/http.js`) takes each caller's key from the
 ## Development
 
 ```bash
-npm install
+npm ci         # install exactly what package-lock.json pins
 npm run dev    # run with tsx
 npm run build  # bundle to dist/
 ```
