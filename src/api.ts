@@ -36,16 +36,7 @@ export async function atomsApi(
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetchUpstream("API", url, init);
-
-  let data: any;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  return { ok: response.ok, status: response.status, data };
+  return fetchUpstream("API", url, init);
 }
 
 export function formatApiError(result: ApiResult): string {

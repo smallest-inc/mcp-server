@@ -38,16 +38,7 @@ export async function paymentsApi(
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetchUpstream("Payments API", url, init);
-
-  let data: any;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  return { ok: response.ok, status: response.status, data };
+  return fetchUpstream("Payments API", url, init);
 }
 
 export function formatPaymentsApiError(result: PaymentsApiResult): string {

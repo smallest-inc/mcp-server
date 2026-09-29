@@ -68,6 +68,12 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+/** The stdio entrypoint's context: the env's, marked as the key owner's own. */
+export function localContextFromEnv(): RequestContext | null {
+  const context = contextFromEnv();
+  return context && { ...context, localCaller: true };
+}
+
 /**
  * Build a context from the environment, or null when no key is set.
  *
