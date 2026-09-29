@@ -72,7 +72,12 @@ function upstreamsFromEnv() {
  * would risk JSON-RPC id collisions between them, so each request gets its own
  * and both are closed when the response ends.
  */
-async function handleMcpRequest(req: Request, res: Response, abort: AbortController): Promise<void> {
+async function handleMcpRequest(
+  req: Request,
+  res: Response,
+  abort: AbortController,
+  timeoutMs: number
+): Promise<void> {
   const server = new McpServer(
     { name: "smallest", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
@@ -98,7 +103,7 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
   res.on("close", closeQuietly);
 
   const deadline = setTimeout(() => {
-    logEvent("mcp_request_timeout", { timeoutMs: requestTimeoutMs() });
+    logEvent("mcp_request_timeout", { timeoutMs });
     // Stop the upstream work too. Without this the tool keeps running against
     // the Atoms API long after the caller has been answered.
     abort.abort(new Error("MCP request deadline exceeded"));
@@ -113,7 +118,7 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
       res.end();
     }
     closeQuietly();
-  }, requestTimeoutMs());
+  }, timeoutMs);
 
   try {
     await server.connect(transport);
@@ -121,6 +126,21 @@ async function handleMcpRequest(req: Request, res: Response, abort: AbortControl
   } finally {
     clearTimeout(deadline);
   }
+}
+
+/** Methods and tool names in a JSON-RPC body, for the access log. Never arguments. */
+function describeRpc(body: unknown): { method: string; tool?: string } {
+  const calls = (Array.isArray(body) ? body : [body]).filter(
+    (c): c is { method?: unknown; params?: { name?: unknown } } => typeof c === "object" && c !== null
+  );
+  const methods = calls.map((c) => (typeof c.method === "string" ? c.method : "?"));
+  const tools = calls
+    .filter((c) => c.method === "tools/call" && typeof c.params?.name === "string")
+    .map((c) => c.params!.name as string);
+  return {
+    method: methods.join(",") || "?",
+    ...(tools.length ? { tool: tools.join(",") } : {}),
+  };
 }
 
 /**
@@ -234,6 +254,8 @@ export function createApp() {
 
     const requestId = randomUUID();
     res.setHeader("X-Request-Id", requestId);
+    const startedAt = Date.now();
+    const timeoutMs = requestTimeoutMs();
 
     const abort = new AbortController();
     // A client that hangs up should stop the work it asked for.
@@ -244,9 +266,30 @@ export function createApp() {
     const orgId = typeof auth?.extra?.orgId === "string" ? auth.extra.orgId : undefined;
     const userId = typeof auth?.extra?.userId === "string" ? auth.extra.userId : undefined;
 
+    // One structured line per request, success included: without it an incident
+    // has no request rate, tool mix, status or latency, and no per-org view.
+    res.on("finish", () => {
+      logEvent("mcp_request", {
+        requestId,
+        orgId,
+        ...describeRpc(req.body),
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+
     try {
-      await runWithContext({ apiKey, ...upstreams, orgId, userId, signal: abort.signal }, () =>
-        handleMcpRequest(req, res, abort)
+      await runWithContext(
+        {
+          apiKey,
+          ...upstreams,
+          orgId,
+          userId,
+          signal: abort.signal,
+          requestId,
+          deadlineAt: startedAt + timeoutMs,
+        },
+        () => handleMcpRequest(req, res, abort, timeoutMs)
       );
     } catch (error) {
       logEvent("mcp_request_failed", {

@@ -18,7 +18,7 @@ export async function paymentsApi(
   path: string,
   body?: unknown
 ): Promise<PaymentsApiResult> {
-  const { apiKey, paymentsUrl , signal } = requireContext("for payment API calls");
+  const { apiKey, paymentsUrl, signal, requestId } = requireContext("for payment API calls");
 
   const org = await getAuthenticatedOrg();
 
@@ -29,6 +29,7 @@ export async function paymentsApi(
     "X-Organization-Id": org.orgId,
   };
 
+  if (requestId) headers["X-Request-Id"] = requestId;
   const init: RequestInit = { method, headers, signal };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
