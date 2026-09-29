@@ -740,6 +740,155 @@ describe("hosted HTTP transport", () => {
     expect(result.content[0].text).toContain("Provide either a `tools` array");
   });
 
+  describe("update_agent: a failure is isError only when nothing reached the agent", () => {
+    /** Routes the Atoms calls update_agent makes: the agent, its PATCH, branches, the draft save. */
+    function stubAgent(patchStatus: number, draftStatus: number) {
+      vi.stubGlobal("fetch", async (input: any, init?: any) => {
+        const url = typeof input === "string" ? input : input.url;
+        if (url.startsWith(base)) return realFetch(input, init);
+        if (url.includes("console.example")) {
+          return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+        }
+        const method = init?.method ?? "GET";
+        const reply = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body });
+        if (url.endsWith("/branches/b1/draft") && method === "PUT") {
+          return reply(draftStatus, draftStatus < 300 ? { data: {} } : { status: false, errors: ["draft rejected"] });
+        }
+        if (url.endsWith("/branches")) {
+          return reply(200, { data: { branches: [{ branch: { _id: "b1", name: "main" }, isLive: true }] } });
+        }
+        if (url.endsWith("/agent/a1") && method === "PATCH") {
+          return reply(patchStatus, patchStatus < 300 ? { data: {} } : { status: false, errors: ["name taken"] });
+        }
+        if (url.endsWith("/agent/a1")) return reply(200, { data: { _id: "a1", workflowType: "single_prompt" } });
+        return reply(404, { status: false, errors: ["unexpected " + method + " " + url] });
+      });
+    }
+
+    const updateAgent = async (args: Record<string, unknown>) => {
+      const res = await rpc(
+        { jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "update_agent", arguments: { agent_id: "a1", ...args } } },
+        { Authorization: "Bearer sk_live0000000000000000000000000000" }
+      );
+      return JSON.parse(await res.text()).result;
+    };
+
+    it("metadata only, and it fails: isError", async () => {
+      stubAgent(400, 200);
+      const result = await updateAgent({ name: "New" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Failed to update metadata");
+    });
+
+    it("metadata written, then the draft save fails: a partial success", async () => {
+      stubAgent(200, 400);
+      const result = await updateAgent({ name: "New", first_message: "Hi" });
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain("Metadata updated directly");
+      expect(result.content[0].text).toContain("However");
+    });
+
+    it("no metadata, and the draft save fails: isError", async () => {
+      stubAgent(200, 400);
+      const result = await updateAgent({ first_message: "Hi" });
+      expect(result.isError).toBe(true);
+    });
+
+    it("metadata fails but the draft saves: a partial success that names the failure", async () => {
+      stubAgent(400, 200);
+      const result = await updateAgent({ name: "New", first_message: "Hi" });
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain("Failed to update metadata");
+      expect(result.content[0].text).toContain("Config changes saved to draft");
+    });
+  });
+
+  it("leaves successes and the informational 'no draft' answers as normal results", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      if (url.endsWith("/branches")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: { branches: [{ branch: { _id: "b1", name: "main" }, isLive: true, hasOpenDraft: true }] } }),
+        };
+      }
+      if (url.endsWith("/branches/b1/draft")) {
+        return { ok: false, status: 404, json: async () => ({ status: false, errors: ["no draft"] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ data: { agents: [], totalCount: 0 } }) };
+    });
+
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const res = await rpc(
+        { jsonrpc: "2.0", id: 21, method: "tools/call", params: { name, arguments: args } },
+        { Authorization: "Bearer sk_live0000000000000000000000000000" }
+      );
+      return JSON.parse(await res.text()).result;
+    };
+
+    // A blanket conversion would flip these without anyone noticing.
+    expect((await call("get_agents", {})).isError).toBeFalsy();
+    const draft = await call("get_branch_draft", { agent_id: "a1" });
+    expect(draft.isError).toBeFalsy();
+    expect(draft.content[0].text).toContain("No open draft");
+    const discard = await call("publish_draft", { agent_id: "a1", action: "discard" });
+    expect(discard.isError).toBeFalsy();
+    expect(discard.content[0].text).toContain("No pending draft");
+  });
+
+  it("marks a publish the security check blocked as a failed call", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      const reply = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+      if (url.endsWith("/branches")) {
+        return reply({ data: { branches: [{ branch: { _id: "b1", name: "main" }, isLive: true, hasOpenDraft: true }] } });
+      }
+      if (url.endsWith("/draft/publish")) return reply({ data: { state: "scanning" } });
+      if (url.endsWith("/branches/b1/draft")) {
+        return reply({ data: { latest: { securityCheck: { status: "failed", reason: "prompt injection" } } } });
+      }
+      return reply({ data: {} });
+    });
+
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 23, method: "tools/call", params: { name: "publish_draft", arguments: { agent_id: "a1", action: "publish" } } },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+    const result = JSON.parse(await res.text()).result;
+
+    // Nothing was committed; the model has to fix the prompt and retry.
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ committed: false, securityCheck: "failed" });
+  }, 15_000);
+
+  it("marks an agent name that matches nothing as a failed call", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ data: { agents: [] } }) };
+    });
+
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "get_call_logs", arguments: { agent_name: "nobody" } } },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+    const result = JSON.parse(await res.text()).result;
+    // The query never ran; it is not "zero calls for that agent".
+    expect(result.isError).toBe(true);
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

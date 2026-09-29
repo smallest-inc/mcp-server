@@ -48,7 +48,9 @@ export function registerListCalls(server: McpServer) {
         }
         const agents = (agentsResult.data?.data?.agents ?? []) as IAgentDTO[];
         if (agents.length === 0) {
+          // The query never ran; not "zero calls for that agent".
           return {
+            isError: true,
             content: [
               {
                 type: "text" as const,

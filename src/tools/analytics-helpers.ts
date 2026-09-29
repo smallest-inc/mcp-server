@@ -1,3 +1,4 @@
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { atomsApi, formatApiError } from "../api.js";
@@ -43,7 +44,7 @@ interface AnalyticsFilterParams {
 export async function callAnalyticsEndpoint(
   endpoint: string,
   params: AnalyticsFilterParams
-): Promise<{ content: { type: "text"; text: string }[] }> {
+): Promise<CallToolResult> {
   const dateFrom = params.start_date ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const dateTo = params.end_date ?? new Date().toISOString();
 
@@ -58,7 +59,9 @@ export async function callAnalyticsEndpoint(
     }
     const agents = (agentsResult.data?.data?.agents ?? []) as IAgentDTO[];
     if (agents.length === 0) {
+      // The query never ran; not "no data for that agent".
       return {
+        isError: true,
         content: [{ type: "text" as const, text: `No agents found matching "${params.agent_name}".` }],
       };
     }
@@ -88,7 +91,7 @@ export async function callAnalyticsEndpoint(
 export async function callDateScopedEndpoint(
   endpoint: string,
   params: { date: string; agent_id?: string }
-): Promise<{ content: { type: "text"; text: string }[] }> {
+): Promise<CallToolResult> {
   const queryParams = new URLSearchParams({ date: params.date });
   if (params.agent_id) queryParams.set("agentId", params.agent_id);
 
