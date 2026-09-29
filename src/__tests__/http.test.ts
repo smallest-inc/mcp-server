@@ -69,8 +69,9 @@ function stubUpstreams(options: { consoleStatus?: number; delayFor?: string } = 
   return upstream;
 }
 
-async function rpc(body: unknown, headers: Record<string, string> = {}) {
+async function rpc(body: unknown, headers: Record<string, string> = {}, signal?: AbortSignal) {
   return realFetch(`${base}/mcp`, {
+    signal,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -472,6 +473,93 @@ describe("hosted HTTP transport", () => {
     expect(res.headers.get("connection")).toBe("close");
   });
 
+  it("clears the deadline when the client hangs up, instead of logging a timeout later", async () => {
+    vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "300");
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+
+    const client = new AbortController();
+    const pending = rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" }, client.signal)
+      .catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    client.abort();
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(lines.some((l) => l.includes('"event":"mcp_request_timeout"'))).toBe(false);
+    expect(lines.some((l) => l.includes('"aborted":true'))).toBe(true);
+  });
+
+  it("does not abort a request's signal when it finished normally", async () => {
+    let upstreamSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      // transcribe_audio hands the request's own signal to fetch.
+      upstreamSignal = init?.signal;
+      return { ok: true, status: 200, json: async () => ({ text: "hi" }) };
+    });
+
+    const res = await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: { name: "transcribe_audio", arguments: { audio_url: "https://cdn.example/a.wav", language: "en" } },
+      },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+    await res.text();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // An aborted signal's reason held the whole response and server alive for
+    // as long as anything listened to it: about 1.3 MB per call, never freed.
+    expect(upstreamSignal).toBeInstanceOf(AbortSignal);
+    expect(upstreamSignal?.aborted).toBe(false);
+  });
+
+  it("ignores a sub-millisecond deadline rather than timing every request out", async () => {
+    vi.stubEnv("MCP_REQUEST_TIMEOUT_MS", "0.5");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // createApp read the env already; the deadline is read per request.
+    stubUpstreams();
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
+    expect(await res.text()).not.toContain("-32001");
+  });
+
+  it("caps caller-supplied tool names in the access log", async () => {
+    stubUpstreams();
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+
+    await rpc(
+      { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "x".repeat(5_000), arguments: {} } },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    ).then((r) => r.text());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const entry = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((e) => e?.event === "mcp_request");
+    expect(entry?.tool.length).toBeLessThanOrEqual(200);
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 
@@ -511,6 +599,15 @@ describe("upstream base validation", () => {
     expect(invalidUpstreamBase({ ATOMS_API_URL: "http://api.smallest.ai/atoms/v1" })).toMatch(
       /^ATOMS_API_URL must use https/
     );
+  });
+
+  it("refuses http to an IPv6 literal, which has no dots to look internal", () => {
+    expect(invalidUpstreamBase({ A: "http://[2001:db8::1]/atoms/v1" })).toMatch(/must use https/);
+    expect(invalidUpstreamBase({ A: "http://[::1]:4000" })).toBeNull();
+  });
+
+  it("refuses a base with credentials in it, which fetch would reject on every call", () => {
+    expect(invalidUpstreamBase({ A: "https://u:p@api.smallest.ai/atoms/v1" })).toMatch(/must not contain credentials/);
   });
 
   it("refuses a value with no scheme, which would fail every request", () => {

@@ -83,6 +83,8 @@ export function registerTextToSpeech(server: McpServer) {
           "Content-Type": "application/json",
           Accept: acceptByFormat[params.output_format] ?? "audio/wav",
           Authorization: `Bearer ${getApiKey()}`,
+          // Same header the API helpers send, so Waves logs join ours.
+          ...(optionalContext()?.requestId ? { "X-Request-Id": optionalContext()!.requestId! } : {}),
         },
         body: JSON.stringify(body),
       });
