@@ -242,17 +242,19 @@ function checkOrigin(allowed: Set<string>): RequestHandler {
 }
 
 /**
- * Answers 429 once an org has orgMaxInFlight() requests open. Runs after auth,
- * which resolves the org, and before the body parser, so a refused request is
- * never buffered.
+ * Answers 429 once an org has orgMaxInFlight() calls open. Runs after auth,
+ * which resolves the org, and after the body parser, so a batch counts once per
+ * message: counted per HTTP request, one POST of 100 tools/call would have used
+ * a single slot.
  */
 function capOrgConcurrency(limit: number): RequestHandler {
   const inFlight = new Map<string, number>();
   return (req, res, next) => {
     const orgId = req.auth?.extra?.orgId;
     const key = typeof orgId === "string" ? orgId : req.auth?.clientId ?? "unknown";
+    const weight = Array.isArray(req.body) ? Math.max(1, req.body.length) : 1;
     const current = inFlight.get(key) ?? 0;
-    if (current >= limit) {
+    if (current + weight > limit) {
       logEvent("mcp_org_concurrency_limited", { orgId: key, limit });
       res.set("Retry-After", "1");
       res.status(429).json({
@@ -262,12 +264,12 @@ function capOrgConcurrency(limit: number): RequestHandler {
       });
       return;
     }
-    inFlight.set(key, current + 1);
+    inFlight.set(key, current + weight);
     let released = false;
     res.on("close", () => {
       if (released) return;
       released = true;
-      const remaining = (inFlight.get(key) ?? 1) - 1;
+      const remaining = (inFlight.get(key) ?? weight) - weight;
       if (remaining > 0) inFlight.set(key, remaining);
       else inFlight.delete(key);
     });
@@ -373,9 +375,9 @@ export function createApp() {
     checkOrigin(allowedOrigins),
     requireAuthorizationHeader,
     requireBearerAuth({ verifier }),
-    capOrgConcurrency(orgMaxInFlight()),
     parseJsonRpcBody,
     rejectBatchesOnNewProtocol,
+    capOrgConcurrency(orgMaxInFlight()),
     async (req, res) => {
       const auth = req.auth;
       const apiKey = auth?.token;
