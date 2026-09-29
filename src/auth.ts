@@ -185,6 +185,11 @@ async function resolveOrg(apiKey: string, apiUrl: string): Promise<Authenticated
     throw new Error(`Failed to verify API key: ${response.status}`);
   }
 
+  // A readable answer, not a fault: main-backend maps a user with no orgs to [].
+  if (Array.isArray(data?.organizations) && data.organizations.length === 0) {
+    throw new Error("No organizations found for this API key.");
+  }
+
   const parsed = AccountResponse.safeParse(data);
   if (!parsed.success) {
     // A 200 we cannot read is an infrastructure fault, not a verdict on the

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { atomsApi } from "../api.js";
 import { clearOrgCache, getAuthenticatedOrg } from "../auth.js";
-import { requireContext, runWithContext, setProcessDefault } from "../context.js";
+import { localContextFromEnv, requireContext, runWithContext, setProcessDefault } from "../context.js";
 
 interface Captured {
   url: string;
@@ -115,8 +115,7 @@ describe("request-scoped credentials", () => {
 
       vi.advanceTimersByTime(2 * 60 * 1000);
       await resolve();
-      // Past it. This is the window in which a revoked key keeps working, so it
-      // has to actually expire.
+      // Past it, so the org mapping is looked up again.
       expect(captured.filter((c) => c.url.includes("/account/"))).toHaveLength(2);
     } finally {
       vi.useRealTimers();
@@ -226,7 +225,6 @@ describe("request-scoped credentials", () => {
 
   it.each([
     ["a missing organizations array", { userId: "u" }],
-    ["an empty organizations array", { userId: "u", organizations: [] }],
     ["a non-string orgId", { userId: "u", organizations: [{ orgId: {} }] }],
     ["a missing userId", { organizations: [{ orgId: "org-1" }] }],
   ])("treats an unreadable account response as a fault, not a bad key", async (_label, body) => {
@@ -237,6 +235,18 @@ describe("request-scoped credentials", () => {
     await expect(
       runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
     ).rejects.toThrow(/Could not read the account details/);
+  });
+
+  it("tells a key with no organizations so, rather than blaming the response", async () => {
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ userId: "u", organizations: [] }),
+    }));
+
+    await expect(
+      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => getAuthenticatedOrg())
+    ).rejects.toThrow("No organizations found for this API key.");
   });
 
   it("keeps upstream detail out of the error the caller sees", async () => {
@@ -354,16 +364,71 @@ describe("request-scoped credentials", () => {
   });
 
   it("names the upstream that timed out instead of a bare abort", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        if (url.includes("/account/get-account-details")) {
+          return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "o" }] }) };
+        }
+        // Accepts the connection and never answers.
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      });
+
+      const call = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => atomsApi("GET", "/agent"));
+      const assertion = expect(call).rejects.toThrow("API did not respond within 50s");
+      await vi.advanceTimersByTimeAsync(50_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails a response whose body stalls, rather than reading it as an empty 200", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        if (url.includes("/account/get-account-details")) {
+          return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "o" }] }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            }),
+        };
+      });
+
+      const call = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => atomsApi("GET", "/agent"));
+      const assertion = expect(call).rejects.toThrow("API did not respond within 50s");
+      await vi.advanceTimersByTimeAsync(50_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still reads a non-JSON body as no data, not as a failure", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url.includes("/account/get-account-details")) {
         return { ok: true, status: 200, json: async () => ({ userId: "u", organizations: [{ orgId: "o" }] }) };
       }
-      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      return { ok: false, status: 502, json: async () => { throw new SyntaxError("Unexpected token <"); } };
     });
 
-    await expect(
-      runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => atomsApi("GET", "/agent"))
-    ).rejects.toThrow("API did not respond within 50s");
+    const result = await runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () => atomsApi("GET", "/agent"));
+    expect(result).toEqual({ ok: false, status: 502, data: null });
+  });
+
+  it("marks the stdio context as the key owner's own, with the base normalised", () => {
+    vi.stubEnv("ATOMS_API_KEY", "key-a");
+    vi.stubEnv("ATOMS_API_URL", "https://a.example/atoms/v1/");
+
+    // Without localCaller every npx user would lose the 5xx detail meant for them.
+    expect(localContextFromEnv()).toMatchObject({ localCaller: true, apiUrl: "https://a.example/atoms/v1" });
   });
 
   it("throws when nothing established a context", () => {

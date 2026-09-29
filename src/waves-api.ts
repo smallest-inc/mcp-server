@@ -36,16 +36,7 @@ export async function wavesApi(
     init.body = JSON.stringify(options.body);
   }
 
-  const response = await fetchUpstream("Waves API", url, init);
-
-  let data: any;
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  return { ok: response.ok, status: response.status, data };
+  return fetchUpstream("Waves API", url, init);
 }
 
 export function formatWavesApiError(result: WavesApiResult): string {
