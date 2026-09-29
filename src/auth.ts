@@ -116,7 +116,14 @@ export function clearOrgCache(): void {
  * (atomsApi calls getAuthenticatedOrg, which would call atomsApi again).
  */
 export async function getAuthenticatedOrg(): Promise<AuthenticatedOrg> {
-  const { apiKey, apiUrl } = requireContext();
+  const { apiKey, apiUrl, orgId, userId } = requireContext();
+
+  // Hosted, the verifier already resolved the key's own organization from
+  // console. Asking main-backend again would return the key creator's org
+  // list, whose first entry is a different org whenever the key does not
+  // belong to it — which 403s every payments call and sends duplicate_agent
+  // to the wrong place. It also saves a validation hop per key per TTL.
+  if (orgId && userId) return { orgId, userId };
 
   const key = cacheKeyFor(apiKey, apiUrl);
   const cached = readCache(key);

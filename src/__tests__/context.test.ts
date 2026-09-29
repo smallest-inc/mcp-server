@@ -529,6 +529,30 @@ describe("request-scoped credentials", () => {
     });
   });
 
+  it("uses the key's own org, not the creator's first, when the verifier resolved it", async () => {
+    const captured = stubFetch();
+
+    // The key belongs to org-second, but /account/get-account-details lists the
+    // key creator's orgs and its first entry is org-first. Taking [0] here is
+    // what 403s every payments call for a multi-org user.
+    const org = await runWithContext(
+      { ...ctx("key-a"), orgId: "org-second", userId: "user-9" },
+      () => getAuthenticatedOrg()
+    );
+
+    expect(org).toEqual({ orgId: "org-second", userId: "user-9" });
+    // And it should not have asked main-backend at all.
+    expect(captured.some((c) => c.url.includes("/account/get-account-details"))).toBe(false);
+  });
+
+  it("still resolves the org from main-backend on stdio, where no verifier ran", async () => {
+    stubFetch();
+
+    const org = await runWithContext(ctx("key-a"), () => getAuthenticatedOrg());
+
+    expect(org).toEqual({ orgId: "org-for-key-a", userId: "user-for-key-a" });
+  });
+
   it("throws when nothing established a context", () => {
     expect(() => requireContext()).toThrow(/ATOMS_API_KEY/);
   });
