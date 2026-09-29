@@ -1,5 +1,6 @@
 import { requireContext } from "./context.js";
 import { describeUpstreamError } from "./upstream-error.js";
+import { fetchUpstream } from "./upstream-fetch.js";
 
 // TODO: move to the request context alongside apiUrl when the base URLs are
 // made configurable — this one is still pinned to prod.
@@ -35,7 +36,7 @@ export async function wavesApi(
     init.body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(url, init);
+  const response = await fetchUpstream("Waves API", url, init);
 
   let data: any;
   try {

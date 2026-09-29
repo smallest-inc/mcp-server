@@ -1,6 +1,7 @@
 import { getAuthenticatedOrg } from "./auth.js";
 import { requireContext } from "./context.js";
 import { describeUpstreamError } from "./upstream-error.js";
+import { fetchUpstream } from "./upstream-fetch.js";
 
 interface ApiResult {
   ok: boolean;
@@ -35,7 +36,7 @@ export async function atomsApi(
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, init);
+  const response = await fetchUpstream("API", url, init);
 
   let data: any;
   try {
