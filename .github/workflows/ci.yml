@@ -45,6 +45,9 @@ jobs:
           mkdir -p /tmp/httptest && cp dist/http.js /tmp/httptest/
           printf '{"type":"module"}' > /tmp/httptest/package.json
           cd /tmp/httptest
+          # A DSN so Sentry.init actually runs inside the bundle; the host is
+          # never reached in CI.
+          SENTRY_DSN=https://ci@o0.ingest.sentry.io/0 \
           CONSOLE_BACKEND_URL=https://console.invalid CONSOLE_API_KEY=ci PORT=8099 \
             node --no-experimental-detect-module http.js &
           for _ in $(seq 1 30); do

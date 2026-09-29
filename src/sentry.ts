@@ -22,7 +22,7 @@ import { optionalContext } from "./context.js";
  * floor is deliberately low: over-masking a string that merely looks like a key
  * costs a little debuggability, under-masking costs a credential.
  */
-const API_KEY_PATTERN = /sk_[A-Za-z0-9+/=._%-]{4,}/gi;
+const API_KEY_PATTERN = /(?<![A-Za-z0-9])sk_[A-Za-z0-9+/=._%-]{4,}/gi;
 
 const REDACTED_KEYS = new Set([
   "authorization",
@@ -133,6 +133,8 @@ function redactInner(
   }
 }
 
+export const EXCLUDED_INTEGRATIONS = ["Http", "Express", "Console", "NodeFetch", "OnUnhandledRejection", "McpServer"];
+
 export function initSentry(): void {
   const dsn = process.env.SENTRY_DSN;
   if (!dsn) return;
@@ -161,8 +163,14 @@ export function initSentry(): void {
       queues: false,
       stackFrameVariables: false,
     },
-    // Traces would need a sampling budget and a collector decision; errors first.
-    tracesSampleRate: 0,
+    // No tracesSampleRate at all: even 0 counts as tracing enabled in SDK 11
+    // and installs about 30 tracing integrations, McpServer among them. Traces
+    // would need a sampling budget and a collector decision; errors first.
+    //
+    // Off because the image does not ship @sentry/server-runtime-injection, so
+    // every pod start logged a non-JSON "Failed to register diagnostics-channel
+    // injection hooks" line; nothing here uses those hooks.
+    enableRuntimeChannelInjection: false,
     integrations: (defaults) =>
       // Http/Express/NodeFetch attach request and response detail, including the
       // Authorization header. Console would ship our own structured logs, which
@@ -174,10 +182,10 @@ export function initSentry(): void {
       // close() handlers exist precisely because an unhandled rejection ends the
       // process — and a pod that stays alive in a broken state keeps passing the
       // liveness probe while serving errors.
-      defaults.filter(
-        (i) =>
-          !["Http", "Express", "Console", "NodeFetch", "OnUnhandledRejection"].includes(i.name)
-      ),
+      //
+      // McpServer wraps every MCP server it sees and records tool traffic; it is
+      // only installed with tracing, and is listed so it stays out if that changes.
+      defaults.filter((i) => !EXCLUDED_INTEGRATIONS.includes(i.name)),
     beforeBreadcrumb: (breadcrumb) => redact(breadcrumb) as typeof breadcrumb,
     beforeSend: (event) => redact(event) as typeof event,
   });
