@@ -38,6 +38,7 @@ export function registerTestAgent(server: McpServer) {
     async (params) => {
       if (params.include_draft && params.revision_id) {
         return {
+          isError: true,
           content: [
             { type: "text" as const, text: "Provide either include_draft or revision_id, not both." },
           ],
@@ -45,6 +46,7 @@ export function registerTestAgent(server: McpServer) {
       }
       if (params.mode === "telephony" && !params.to_phone) {
         return {
+          isError: true,
           content: [{ type: "text" as const, text: "to_phone (E.164) is required when mode is telephony." }],
         };
       }

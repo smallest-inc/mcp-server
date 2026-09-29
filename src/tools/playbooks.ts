@@ -4,6 +4,7 @@ import { z } from "zod";
 import { atomsApi, formatApiError } from "../api.js";
 import { resolveBranch, saveConfigToBranch } from "../versioning.js";
 import { apiToolSchema, buildApiCallTool, type ApiToolInput } from "./add-agent-tool.js";
+import { toolError } from "./tool-error.js";
 
 /**
  * Playbooks (multi-agent SOP orchestration) tools.
@@ -237,7 +238,7 @@ function text(payload: unknown) {
 }
 
 function textErr(message: string) {
-  return { content: [{ type: "text" as const, text: message }] };
+  return toolError(message);
 }
 
 const BRANCH_PARAM = z

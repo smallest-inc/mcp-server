@@ -177,6 +177,7 @@ export function registerUpdateWebhook(server: McpServer) {
 
       if (Object.keys(body).length === 0) {
         return {
+          isError: true,
           content: [
             { type: "text" as const, text: "Provide at least one of: endpoint, description, headers." },
           ],

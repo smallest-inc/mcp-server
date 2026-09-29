@@ -328,6 +328,7 @@ export function registerUpdateAgent(server: McpServer) {
       const agent = (agentCheck.data?.data ?? agentCheck.data) as IAgentDTO;
       if (agent.workflowType === "workflow_graph") {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,
@@ -440,6 +441,7 @@ export function registerUpdateAgent(server: McpServer) {
         const url = pc.url ?? current?.url;
         if (enabling && (!url || url.trim().length === 0)) {
           return {
+            isError: true,
             content: [
               {
                 type: "text" as const,
@@ -501,6 +503,7 @@ export function registerUpdateAgent(server: McpServer) {
 
       if (Object.keys(body).length === 0) {
         return {
+          isError: true,
           content: [{ type: "text" as const, text: "No fields provided to update." }],
         };
       }
@@ -523,6 +526,11 @@ export function registerUpdateAgent(server: McpServer) {
 
       const messages: string[] = [];
 
+      // Whether anything reached the agent, which decides if a later failure is
+      // a partial success or the whole call failing.
+      let metadataWritten = false;
+      let metadataFailed = false;
+
       // Update metadata directly if any
       if (Object.keys(metadataFields).length > 0) {
         const metaResult = await atomsApi(
@@ -531,8 +539,10 @@ export function registerUpdateAgent(server: McpServer) {
           metadataFields
         );
         if (metaResult.ok) {
+          metadataWritten = true;
           messages.push(`Metadata updated directly: ${Object.keys(metadataFields).join(", ")}`);
         } else {
+          metadataFailed = true;
           messages.push(`Failed to update metadata: ${formatApiError(metaResult)}`);
         }
       }
@@ -542,6 +552,7 @@ export function registerUpdateAgent(server: McpServer) {
         const branch = await getBranch();
         if (!branch.ok) {
           return {
+            ...(metadataWritten ? {} : { isError: true }),
             content: [
               {
                 type: "text" as const,
@@ -555,6 +566,7 @@ export function registerUpdateAgent(server: McpServer) {
         const saved = await saveConfigToBranch(params.agent_id, branch.value.branchId, payload);
         if (!saved.ok) {
           return {
+            ...(metadataWritten ? {} : { isError: true }),
             content: [
               {
                 type: "text" as const,
@@ -589,8 +601,9 @@ export function registerUpdateAgent(server: McpServer) {
         };
       }
 
-      // Only metadata was updated
+      // Only metadata was requested
       return {
+        ...(metadataFailed ? { isError: true } : {}),
         content: [
           {
             type: "text" as const,
