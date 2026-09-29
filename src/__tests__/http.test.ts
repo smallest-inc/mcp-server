@@ -677,6 +677,30 @@ describe("hosted HTTP transport", () => {
     expect(transcribe.description).toContain("audio_url");
   });
 
+  it("logs an error thrown inside a tool, which the SDK would otherwise swallow", async () => {
+    vi.stubGlobal("fetch", async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.startsWith(base)) return realFetch(input, init);
+      if (url.includes("console.example")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, organizationId: "o", data: { _id: "u" } }) };
+      }
+      throw new TypeError("fetch failed");
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+
+    const res = await rpc(CALL_GET_AGENTS, { Authorization: "Bearer sk_live0000000000000000000000000000" });
+    const result = JSON.parse(await res.text()).result;
+
+    // The caller's answer is unchanged: still the SDK's isError result.
+    expect(result.isError).toBe(true);
+    const thrown = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((e) => e?.event === "mcp_tool_threw");
+    expect(thrown).toMatchObject({ tool: "get_agents", error: "fetch failed" });
+    expect(thrown.requestId).toBe(res.headers.get("X-Request-Id"));
+  });
+
   it("answers GET and DELETE with 405 rather than leaving them to 404", async () => {
     stubUpstreams();
 

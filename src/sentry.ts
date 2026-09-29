@@ -145,7 +145,7 @@ export function initSentry(): void {
     // landed in prod alerts. Helm sets this per environment.
     environment: process.env.SENTRY_ENVIRONMENT || "development",
     // The image's git SHA (Dockerfile ARG), so an issue names the build that
-    // introduced it and suspect commits work.
+    // introduced it. Suspect commits would also need source maps uploaded.
     release: process.env.SENTRY_RELEASE || undefined,
     // SDK 11 replaced sendDefaultPii with this, and its defaults collect
     // headers, bodies, cookies, user info and stack-frame locals (where an
@@ -207,15 +207,31 @@ function toTags(tags: ErrorTags): Record<string, string> {
 }
 
 /** Report an error without letting a reporting failure affect the request. */
-export function captureError(error: unknown, tags: ErrorTags = {}, extra: Record<string, unknown> = {}): void {
+export function captureError(
+  error: unknown,
+  tags: ErrorTags = {},
+  extra: Record<string, unknown> = {},
+  level: "error" | "warning" = "error"
+): void {
   try {
     Sentry.captureException(error, {
+      level,
       tags: toTags(tags),
       extra: redact(extra) as Record<string, unknown>,
     });
   } catch {
     // Never let the reporter break the thing it is reporting on.
   }
+}
+
+const UPSTREAM_REPORT_INTERVAL_MS = 60_000;
+
+/** Bounded by the few upstream and status pairs that exist. */
+const lastUpstreamReport = new Map<string, number>();
+
+/** Test seam: forget the upstream report throttle. */
+export function resetUpstreamReportThrottle(): void {
+  lastUpstreamReport.clear();
 }
 
 /**
@@ -225,6 +241,14 @@ export function captureError(error: unknown, tags: ErrorTags = {}, extra: Record
  */
 export function captureUpstreamError(upstream: string, status: number): void {
   try {
+    // One event per upstream and status a minute: during an outage every tool
+    // call fails the same way, and an event per call would spend the Sentry
+    // quota exactly when it is needed. The issue still shows the outage.
+    const key = `${upstream}:${status}`;
+    const now = Date.now();
+    if (now - (lastUpstreamReport.get(key) ?? -Infinity) < UPSTREAM_REPORT_INTERVAL_MS) return;
+    lastUpstreamReport.set(key, now);
+
     const context = optionalContext();
     Sentry.captureMessage(`${upstream} returned ${status}`, {
       level: "error",

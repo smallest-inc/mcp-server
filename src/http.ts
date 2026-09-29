@@ -12,7 +12,7 @@ import { basesFromEnv, optionalContext, runWithContext } from "./context.js";
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
-import { captureError, captureUpstreamError, flushSentry, initSentry } from "./sentry.js";
+import { captureError, captureUpstreamError, flushSentry, initSentry, redact } from "./sentry.js";
 import { onUpstreamError } from "./upstream-error.js";
 import { createApiKeyVerifier } from "./verifier.js";
 
@@ -95,6 +95,7 @@ async function handleMcpRequest(
     { name: "smallest", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
   );
+  reportThrownToolErrors(server);
   registerTools(server, { localFilesystem: false });
   registerResources(server);
 
@@ -120,7 +121,9 @@ async function handleMcpRequest(
   // JSON-RPC) are reported through these and would otherwise be silent.
   transport.onerror = (error) => {
     logEvent("mcp_transport_error", { requestId, error: error.message });
-    captureError(error, { source: "transport", requestId, ...describeRpc(req.body) });
+    // Mostly the caller's own mistakes (malformed JSON-RPC, an unsupported
+    // protocol version), which any key holder can send: a warning, not an error.
+    captureError(error, { source: "transport", requestId, ...describeRpc(req.body) }, {}, "warning");
   };
   server.server.onerror = (error) => {
     logEvent("mcp_server_error", { requestId, error: error.message });
@@ -163,6 +166,35 @@ async function handleMcpRequest(
 
 /** Longest method or tool list the access log keeps; names come from the caller. */
 const MAX_LOGGED_NAMES = 200;
+
+/**
+ * The MCP SDK catches an error thrown inside a tool and returns it as an
+ * isError result, so a TypeError, a network failure or an upstream timeout in a
+ * tool left no log line and no Sentry event. Wraps registration to report them;
+ * the SDK still answers the caller the same way.
+ */
+function reportThrownToolErrors(server: McpServer): void {
+  const register = server.registerTool.bind(server) as (...args: any[]) => unknown;
+  (server as { registerTool: unknown }).registerTool = (
+    name: string,
+    config: unknown,
+    handler: (...args: any[]) => unknown
+  ) =>
+    register(name, config, async (...args: any[]) => {
+      try {
+        return await handler(...args);
+      } catch (error) {
+        const requestId = optionalContext()?.requestId;
+        logEvent("mcp_tool_threw", {
+          requestId,
+          tool: name,
+          error: redact(error instanceof Error ? error.message : String(error)),
+        });
+        captureError(error, { source: "tool", tool: name, requestId });
+        throw error;
+      }
+    });
+}
 
 /** Methods and tool names in a JSON-RPC body, for the access log. Never arguments. */
 function describeRpc(body: unknown): { method: string; tool?: string } {
