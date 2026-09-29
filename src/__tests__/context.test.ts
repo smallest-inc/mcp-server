@@ -252,19 +252,33 @@ describe("request-scoped credentials", () => {
     ).rejects.toThrow(/^Failed to verify API key: 502$/);
   });
 
-  it("does not pass an upstream 5xx body back to the caller", async () => {
+  it("does not pass an upstream 5xx body back to a hosted caller", async () => {
     stubFetch();
     const { formatApiError } = await import("../api.js");
 
-    const message = formatApiError({
-      ok: false,
-      status: 502,
-      data: { message: "connect ECONNREFUSED atoms-mainbackend.internal:4000" },
-    });
+    const message = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1", hosted: true }, () =>
+      formatApiError({
+        ok: false,
+        status: 502,
+        data: { message: "connect ECONNREFUSED atoms-mainbackend.internal:4000" },
+      })
+    );
 
     // Hosted, this string reaches a stranger.
     expect(message).not.toContain("internal");
     expect(message).toBe("API error 502: the upstream service failed");
+  });
+
+  it("keeps the 5xx detail for a stdio caller, who owns the key", async () => {
+    const { formatApiError } = await import("../api.js");
+
+    // stderr is invisible in most MCP clients, so this is the only place a
+    // local user debugging their own setup would see why the call failed.
+    const message = runWithContext({ apiKey: "key-a", apiUrl: "https://a.example/atoms/v1" }, () =>
+      formatApiError({ ok: false, status: 503, data: { message: "upstream warming up" } })
+    );
+
+    expect(message).toBe("API error 503: upstream warming up");
   });
 
   it("still passes a 4xx message through, since it is meant for the caller", async () => {
