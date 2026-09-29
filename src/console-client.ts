@@ -121,10 +121,13 @@ export async function validateApiKey(
     });
   } catch (error) {
     // No response at all — timeout or outage, not a rejected credential.
+    // undici's message is usually just "fetch failed"; the cause carries the
+    // ECONNREFUSED or ENOTFOUND that says which.
+    const cause = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
     return {
       ok: false,
       unavailable: true,
-      error: error instanceof Error ? error.message : "console unreachable",
+      error: error instanceof Error ? `${error.message}${typeof cause === "string" ? ` (${cause})` : ""}` : "console unreachable",
     };
   }
 

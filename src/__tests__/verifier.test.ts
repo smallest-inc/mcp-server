@@ -1,3 +1,5 @@
+import { validateHeaderValue } from "node:http";
+
 import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -253,7 +255,7 @@ describe("API key verifier", () => {
       body: {
         success: false,
         error_type: "account-blocked",
-        message: 'Blocked "for review"\r\nSet-Cookie: x=1 ' + "a".repeat(300),
+        message: 'Blocked \u2019for review\u2019 \u2014 "see console"\r\nSet-Cookie: x=1 ' + "a".repeat(300),
       },
     });
 
@@ -266,7 +268,9 @@ describe("API key verifier", () => {
     const description = (error as AccountBlockedError).toResponseObject().error_description ?? "";
     expect(description).not.toMatch(/["\r\n]/);
     expect(description.length).toBeLessThanOrEqual(200);
-    expect(() => new Headers({ "WWW-Authenticate": `Bearer error_description="${description}"` })).not.toThrow();
+    // Node's own rule, which is stricter than WHATWG Headers: it rejects
+    // anything above U+00FF, which is what setHeader enforces in requireBearerAuth.
+    expect(() => validateHeaderValue("WWW-Authenticate", `Bearer error_description="${description}"`)).not.toThrow();
   });
 
   it("still reads a console 403 without the block marker as a rejected key", async () => {

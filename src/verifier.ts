@@ -158,11 +158,12 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
 
 /**
  * requireBearerAuth copies the message into WWW-Authenticate as a quoted
- * error_description. It is console's string, so a quote would break the header
- * and a newline makes Node throw, turning a clean 403 into a 500.
+ * error_description. It is console's string, so a quote would break the header,
+ * and a newline or anything above U+00FF (a curly apostrophe, an em dash) makes
+ * Node throw, turning a clean 403 into a 500. Printable ASCII only.
  */
 export function headerSafe(message: string): string {
-  const cleaned = message.replace(/["\\\p{Cc}]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  const cleaned = message.replace(/["\\]|[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
   return cleaned || "This account is blocked";
 }
 
