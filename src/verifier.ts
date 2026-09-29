@@ -11,8 +11,9 @@ import { createHash } from "node:crypto";
 import { consoleConfigFromEnv, validateApiKey, type ConsoleConfig, type ValidatedKey } from "./console-client.js";
 
 /**
- * How long one validation is trusted. Matches the organization cache TTL in
- * auth.ts, and is also the window in which a revoked key keeps working.
+ * How long a pod skips console for a key it has already validated. Matches the
+ * organization cache TTL in auth.ts. Not a revocation window: main-backend
+ * still rejects a revoked key on its next upstream call.
  */
 export const VALIDATION_TTL_SECONDS = 5 * 60;
 
@@ -139,7 +140,7 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
             throw new ServerError("Could not verify the API key right now");
           }
           if (result.blocked) {
-            throw new AccountBlockedError(result.blocked.message);
+            throw new AccountBlockedError(headerSafe(result.blocked.message));
           }
           throw new InvalidTokenError(INVALID_KEY_MESSAGE);
         }
@@ -153,6 +154,16 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
       return authInfoFor(token, await lookup);
     },
   };
+}
+
+/**
+ * requireBearerAuth copies the message into WWW-Authenticate as a quoted
+ * error_description. It is console's string, so a quote would break the header
+ * and a newline makes Node throw, turning a clean 403 into a 500.
+ */
+export function headerSafe(message: string): string {
+  const cleaned = message.replace(/["\\\p{Cc}]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  return cleaned || "This account is blocked";
 }
 
 function authInfoFor(token: string, value: ValidatedKey): AuthInfo {

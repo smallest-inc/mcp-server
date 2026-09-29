@@ -247,6 +247,28 @@ describe("API key verifier", () => {
     });
   });
 
+  it("keeps console's block message safe to put in a header", async () => {
+    stubConsole({
+      status: 403,
+      body: {
+        success: false,
+        error_type: "account-blocked",
+        message: 'Blocked "for review"\r\nSet-Cookie: x=1 ' + "a".repeat(300),
+      },
+    });
+
+    const error = await createApiKeyVerifier(CONFIG)
+      .verifyAccessToken(KEY)
+      .catch((e: unknown) => e);
+
+    // requireBearerAuth quotes this into WWW-Authenticate; a newline there
+    // makes Node throw and the 403 becomes a 500.
+    const description = (error as AccountBlockedError).toResponseObject().error_description ?? "";
+    expect(description).not.toMatch(/["\r\n]/);
+    expect(description.length).toBeLessThanOrEqual(200);
+    expect(() => new Headers({ "WWW-Authenticate": `Bearer error_description="${description}"` })).not.toThrow();
+  });
+
   it("still reads a console 403 without the block marker as a rejected key", async () => {
     stubConsole({ status: 403, body: { success: false, error: "Forbidden" } });
 
