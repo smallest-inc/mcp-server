@@ -163,6 +163,9 @@ export class AtomsChatClient {
         // end_call fired): resolve the turn with what we collected rather than
         // erroring. Only error if the turn produced nothing at all.
         this.settleTurn(true);
+        // Nothing collected: fail the turn now. Left alone it waited out its
+        // hard timer (up to reply_timeout_ms) on a socket that is already gone.
+        this.failActiveTurn(new Error(`Chat session closed: ${this.closedReason ?? "closed by the server"}`));
         this.resolveCloseWaiters();
       });
     });
