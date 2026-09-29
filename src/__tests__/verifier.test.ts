@@ -2,7 +2,12 @@ import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConsoleConfig } from "../console-client.js";
-import { API_KEY_SCOPE, clearValidationCache, createApiKeyVerifier } from "../verifier.js";
+import {
+  AccountBlockedError,
+  API_KEY_SCOPE,
+  clearValidationCache,
+  createApiKeyVerifier,
+} from "../verifier.js";
 
 const CONFIG: ConsoleConfig = { url: "https://console.example", serviceApiKey: "service-key" };
 
@@ -30,6 +35,8 @@ function stubConsole(response: { status?: number; body?: unknown } | { reject: E
 
 const OK_BODY = { success: true, organizationId: "org-1", data: { _id: "user-1" } };
 
+const KEY = "sk_0123456789abcdef0123456789abcdef";
+
 beforeEach(() => clearValidationCache());
 
 afterEach(() => {
@@ -42,23 +49,23 @@ describe("API key verifier", () => {
   it("resolves a valid key to an AuthInfo carrying the org", async () => {
     const calls = stubConsole({ body: OK_BODY });
 
-    const auth = await createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live");
+    const auth = await createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef");
 
-    expect(auth.token).toBe("sk_live");
+    expect(auth.token).toBe("sk_0123456789abcdef0123456789abcdef");
     expect(auth.extra).toEqual({ orgId: "org-1", userId: "user-1" });
     // The key must not be duplicated into `extra`, which loggers serialise whole.
-    expect(JSON.stringify(auth.extra)).not.toContain("sk_live");
+    expect(JSON.stringify(auth.extra)).not.toContain("sk_0123456789abcdef0123456789abcdef");
     expect(auth.scopes).toEqual([API_KEY_SCOPE]);
     expect(calls[0].url).toBe("https://console.example/user/token");
     // The user's key authenticates the user; the service key authenticates us.
-    expect(calls[0].headers.Authorization).toBe("Bearer sk_live");
+    expect(calls[0].headers.Authorization).toBe("Bearer sk_0123456789abcdef0123456789abcdef");
     expect(calls[0].headers["X-API-Key"]).toBe("service-key");
   });
 
   it("always sets a numeric future expiresAt", async () => {
     stubConsole({ body: OK_BODY });
 
-    const auth = await createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live");
+    const auth = await createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef");
 
     // requireBearerAuth rejects AuthInfo without one ("Token has no expiration
     // time"), so an omitted expiresAt would 401 every request with a valid key.
@@ -69,7 +76,7 @@ describe("API key verifier", () => {
   it("rejects a bad key as an invalid token", async () => {
     stubConsole({ status: 401, body: { success: false, error: "invalid key" } });
 
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_bad")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_fedcba9876543210fedcba9876543210")).rejects.toBeInstanceOf(
       InvalidTokenError
     );
   });
@@ -81,7 +88,7 @@ describe("API key verifier", () => {
   ])("reports %s as a server error, not a bad key", async (_label, response) => {
     stubConsole(response as any);
 
-    const verify = createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live");
+    const verify = createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef");
 
     // The distinction that matters: a 401 here would tell every user their key
     // is invalid during an outage, and they would rotate keys that were fine.
@@ -92,7 +99,7 @@ describe("API key verifier", () => {
   it("rejects the key only when console explicitly says so", async () => {
     stubConsole({ body: { success: false, organizationId: "org-1", data: { _id: "user-1" } } });
 
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       InvalidTokenError
     );
   });
@@ -107,7 +114,7 @@ describe("API key verifier", () => {
 
     // Answering these with 401 would have every user rotating a working key
     // because someone rotated the service credential or moved a route.
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
   });
@@ -123,7 +130,7 @@ describe("API key verifier", () => {
 
     // A non-string id would coerce to something like "[object Object]" and
     // collapse distinct tenants onto one identity, so it must fail closed.
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
   });
@@ -131,7 +138,7 @@ describe("API key verifier", () => {
   it("consumes the response body even when it does not need to read it", async () => {
     stubConsole({ status: 500, body: { message: "boom" } });
 
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
 
@@ -144,9 +151,9 @@ describe("API key verifier", () => {
     const calls = stubConsole({ body: OK_BODY });
     const verifier = createApiKeyVerifier(CONFIG);
 
-    await verifier.verifyAccessToken("sk_live");
-    await verifier.verifyAccessToken("sk_live");
-    await Promise.all([verifier.verifyAccessToken("sk_live"), verifier.verifyAccessToken("sk_live")]);
+    await verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef");
+    await verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef");
+    await Promise.all([verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef"), verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef")]);
 
     // requireBearerAuth runs the verifier on every request, so without a cache
     // every tool call is a console round trip.
@@ -156,10 +163,10 @@ describe("API key verifier", () => {
   it("does not cache a rejection", async () => {
     stubConsole({ status: 401, body: { success: false } });
     const verifier = createApiKeyVerifier(CONFIG);
-    await expect(verifier.verifyAccessToken("sk_live")).rejects.toBeInstanceOf(InvalidTokenError);
+    await expect(verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(InvalidTokenError);
 
     const calls = stubConsole({ body: OK_BODY });
-    await expect(verifier.verifyAccessToken("sk_live")).resolves.toMatchObject({ token: "sk_live" });
+    await expect(verifier.verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).resolves.toMatchObject({ token: "sk_0123456789abcdef0123456789abcdef" });
     expect(calls).toHaveLength(1);
   });
 
@@ -169,7 +176,7 @@ describe("API key verifier", () => {
     // avoid, so the body has to break the tie.
     stubConsole({ status: 401, body: { message: "invalid api key" } });
 
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
   });
@@ -184,7 +191,7 @@ describe("API key verifier", () => {
     // Only console answers with a boolean `success`. Anything else at 401 is
     // most likely our service credential, and blaming the caller for that is
     // the outage this whole path exists to avoid.
-    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
   });
@@ -193,7 +200,7 @@ describe("API key verifier", () => {
     const calls = stubConsole({ status: 500 });
 
     const error = await createApiKeyVerifier(CONFIG)
-      .verifyAccessToken("sk_live")
+      .verifyAccessToken("sk_0123456789abcdef0123456789abcdef")
       .then(() => new Error("expected a rejection"), (e) => e as Error);
 
     // The message reaches the client verbatim via error_description, so assert
@@ -208,9 +215,55 @@ describe("API key verifier", () => {
     const calls = stubConsole({ body: OK_BODY });
 
     // No config argument, so it falls back to the environment and finds nothing.
-    await expect(createApiKeyVerifier().verifyAccessToken("sk_live")).rejects.toBeInstanceOf(
+    await expect(createApiKeyVerifier().verifyAccessToken("sk_0123456789abcdef0123456789abcdef")).rejects.toBeInstanceOf(
       ServerError
     );
+    expect(calls).toHaveLength(0);
+  });
+  it("tells a blocked account it is blocked, not that its key is bad", async () => {
+    // Console's block gate on /user/token (console-backend user.controller.ts).
+    // The wire value of ACCOUNT_BLOCKED_ERROR_TYPE is "account-blocked".
+    stubConsole({
+      status: 403,
+      body: {
+        success: false,
+        error: "Your account has been blocked.",
+        error_type: "account-blocked",
+        message: "Your account has been blocked.",
+      },
+    });
+
+    const error = await createApiKeyVerifier(CONFIG)
+      .verifyAccessToken(KEY)
+      .catch((e: unknown) => e);
+
+    // A distinct 403 — rotating the key would not help, so it must not read
+    // as InvalidTokenError's "check your key".
+    expect(error).toBeInstanceOf(AccountBlockedError);
+    expect(error).not.toBeInstanceOf(InvalidTokenError);
+    expect((error as AccountBlockedError).toResponseObject()).toMatchObject({
+      error: "account_blocked",
+      error_description: "Your account has been blocked.",
+    });
+  });
+
+  it("still reads a console 403 without the block marker as a rejected key", async () => {
+    stubConsole({ status: 403, body: { success: false, error: "Forbidden" } });
+
+    await expect(createApiKeyVerifier(CONFIG).verifyAccessToken(KEY)).rejects.toBeInstanceOf(
+      InvalidTokenError
+    );
+  });
+
+  it("rejects a token that cannot be an API key without calling console", async () => {
+    const calls = stubConsole({ body: OK_BODY });
+    const verifier = createApiKeyVerifier(CONFIG);
+
+    for (const token of ["hello", "Bearer sk_x", "sk_", "sk_short", "sk_" + "a".repeat(200), "sk_abc$%^&*()abcdefghijk"]) {
+      await expect(verifier.verifyAccessToken(token)).rejects.toBeInstanceOf(InvalidTokenError);
+    }
+
+    // The point: garbage tokens don't turn this endpoint into a console load generator.
     expect(calls).toHaveLength(0);
   });
 });

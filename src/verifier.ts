@@ -1,4 +1,8 @@
-import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import {
+  InsufficientScopeError,
+  InvalidTokenError,
+  ServerError,
+} from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
@@ -12,6 +16,9 @@ import { consoleConfigFromEnv, validateApiKey, type ConsoleConfig, type Validate
  */
 export const VALIDATION_TTL_SECONDS = 5 * 60;
 
+const INVALID_KEY_MESSAGE =
+  "Invalid or revoked API key. Check your key in the Atoms console (Settings > API Keys).";
+
 /**
  * Scope granted to an API key. Keys are not scoped today — they carry whatever
  * the user can do — so this is a single placeholder that the eventual OAuth
@@ -20,6 +27,23 @@ export const VALIDATION_TTL_SECONDS = 5 * 60;
  * change when scopes arrive.
  */
 export const API_KEY_SCOPE = "atoms:all";
+
+/**
+ * Console mints keys as `sk_` + 32 hex (console-backend lib/apiKeys.ts). This
+ * accepts a wider shape on purpose: its job is to stop a garbage bearer string
+ * from costing a console round trip, and rejecting a real key minted in some
+ * older format would tell its owner a working key is invalid.
+ */
+const PLAUSIBLE_API_KEY = /^sk_[A-Za-z0-9]{16,128}$/;
+
+/**
+ * The account behind the key is blocked. requireBearerAuth answers any
+ * InsufficientScopeError with 403, so subclassing it gets the right status
+ * while the error code tells the client this is not about scopes or the key.
+ */
+export class AccountBlockedError extends InsufficientScopeError {
+  static errorCode = "account_blocked";
+}
 
 interface CacheEntry {
   value: ValidatedKey;
@@ -88,6 +112,12 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
         throw new ServerError("Console credentials are not configured");
       }
 
+      // Before any network call, so a stranger posting random tokens can't use
+      // this endpoint to generate console load one request at a time.
+      if (!PLAUSIBLE_API_KEY.test(token)) {
+        throw new InvalidTokenError(INVALID_KEY_MESSAGE);
+      }
+
       const key = cacheKeyFor(token, resolved.url);
       const cached = readCache(key);
       if (cached) return authInfoFor(token, cached);
@@ -108,9 +138,10 @@ export function createApiKeyVerifier(config?: ConsoleConfig): OAuthTokenVerifier
             );
             throw new ServerError("Could not verify the API key right now");
           }
-          throw new InvalidTokenError(
-            "Invalid or revoked API key. Check your key in the Atoms console (Settings > API Keys)."
-          );
+          if (result.blocked) {
+            throw new AccountBlockedError(result.blocked.message);
+          }
+          throw new InvalidTokenError(INVALID_KEY_MESSAGE);
         }
         writeCache(key, result.value);
         return result.value;
