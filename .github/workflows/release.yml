@@ -10,6 +10,13 @@ on:
     # publish. These are the only paths that change what gets published.
     paths:
       - "src/**"
+      # Hosted-only: never reach dist/index.js (checked with esbuild's metafile),
+      # so a change here would publish a new version with an identical bundle.
+      - "!src/http.ts"
+      - "!src/console-client.ts"
+      - "!src/verifier.ts"
+      - "!src/sentry.ts"
+      - "!src/__tests__/**"
       - "package.json"
       - "package-lock.json"
       # esbuild reads it, so it changes the published bundle.
