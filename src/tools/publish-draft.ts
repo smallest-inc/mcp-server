@@ -67,7 +67,10 @@ export function registerPublishDraft(server: McpServer) {
       const { state, isLive, revisionId, revisionNumber, reason } = published.value;
 
       if (state === "failed") {
+        // Nothing was published, and the model has to fix the prompt and retry.
+        // "scanning" below is different: the publish went through and is pending.
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

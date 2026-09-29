@@ -45,7 +45,9 @@ export function registerGetUsageStats(server: McpServer) {
         }
         const agents = (agentsResult.data?.data?.agents ?? []) as IAgentDTO[];
         if (agents.length === 0) {
+          // The query never ran; not "no usage for that agent".
           return {
+            isError: true,
             content: [{ type: "text" as const, text: "No agents found matching your criteria." }],
           };
         }
