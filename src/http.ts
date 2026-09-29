@@ -12,7 +12,8 @@ import { basesFromEnv, optionalContext, runWithContext } from "./context.js";
 import { registerResources } from "./resources/index.js";
 import { registerTools } from "./tools/index.js";
 import { consoleConfigFromEnv } from "./console-client.js";
-import { captureError, flushSentry, initSentry } from "./sentry.js";
+import { captureError, captureUpstreamError, flushSentry, initSentry } from "./sentry.js";
+import { onUpstreamError } from "./upstream-error.js";
 import { createApiKeyVerifier } from "./verifier.js";
 
 /**
@@ -119,11 +120,11 @@ async function handleMcpRequest(
   // JSON-RPC) are reported through these and would otherwise be silent.
   transport.onerror = (error) => {
     logEvent("mcp_transport_error", { requestId, error: error.message });
-    captureError(error, { source: "transport" });
+    captureError(error, { source: "transport", requestId, ...describeRpc(req.body) });
   };
   server.server.onerror = (error) => {
     logEvent("mcp_server_error", { requestId, error: error.message });
-    captureError(error, { source: "server" });
+    captureError(error, { source: "server", requestId, ...describeRpc(req.body) });
   };
 
   const deadline = setTimeout(() => {
@@ -448,7 +449,7 @@ export function createApp() {
           orgId: auth?.extra?.orgId,
           error: error instanceof Error ? error.message : String(error),
         });
-        captureError(error, { requestId, orgId: auth?.extra?.orgId });
+        captureError(error, { requestId, orgId, ...describeRpc(req.body) });
         if (!res.headersSent) {
           res.status(500).json({ error: "server_error", error_description: "Internal error" });
         } else if (!res.writableEnded) {
@@ -512,6 +513,7 @@ export function invalidUpstreamBase(bases: Record<string, string>): string | nul
 
 export function startServer(port: number): Server {
   initSentry();
+  onUpstreamError(captureUpstreamError);
 
   // Without these, the pod starts, passes both probes, and answers 500 to every
   // request — a rollout goes fully green while serving nothing. Better to fail

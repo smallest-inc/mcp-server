@@ -1,5 +1,7 @@
 import * as Sentry from "@sentry/node";
 
+import { optionalContext } from "./context.js";
+
 /**
  * Error reporting for the hosted server. A no-op without SENTRY_DSN, which is
  * how the stdio server and local runs stay silent.
@@ -24,14 +26,28 @@ const API_KEY_PATTERN = /sk_[A-Za-z0-9+/=._%-]{4,}/gi;
 
 const REDACTED_KEYS = new Set([
   "authorization",
+  "proxy-authorization",
   "x-api-key",
+  // One of the header names Claude's static-headers connector option sends.
+  "x-auth-token",
   "apikey",
   "api_key",
   "token",
   "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+  "password",
+  "secret",
   "cookie",
   "set-cookie",
 ]);
+
+/**
+ * E.164 numbers. make_call and add_audience_members validation errors can echo
+ * a callee's number, which is customer data rather than ours to ship.
+ */
+const PHONE_PATTERN = /\+[1-9]\d{7,14}\b/g;
 
 /** Depth guard, as a backstop to the cycle check below. */
 const MAX_DEPTH = 8;
@@ -40,7 +56,7 @@ const MAX_DEPTH = 8;
 const MAX_ENTRIES = 5_000;
 
 function maskString(value: string): string {
-  return value.replace(API_KEY_PATTERN, "sk_[redacted]");
+  return value.replace(API_KEY_PATTERN, "sk_[redacted]").replace(PHONE_PATTERN, "+[redacted]");
 }
 
 export function redact(value: unknown): unknown {
@@ -123,7 +139,28 @@ export function initSentry(): void {
 
   Sentry.init({
     dsn,
-    environment: process.env.NODE_ENV ?? "development",
+    // Not NODE_ENV: the image sets it to production in dev too, so dev noise
+    // landed in prod alerts. Helm sets this per environment.
+    environment: process.env.SENTRY_ENVIRONMENT || "development",
+    // The image's git SHA (Dockerfile ARG), so an issue names the build that
+    // introduced it and suspect commits work.
+    release: process.env.SENTRY_RELEASE || undefined,
+    // SDK 11 replaced sendDefaultPii with this, and its defaults collect
+    // headers, bodies, cookies, user info and stack-frame locals (where an
+    // apiKey variable lives). Every category is off; the redactor stays as the
+    // second line.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      graphQL: { document: false, variables: false },
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      queues: false,
+      stackFrameVariables: false,
+    },
     // Traces would need a sampling budget and a collector decision; errors first.
     tracesSampleRate: 0,
     integrations: (defaults) =>
@@ -146,12 +183,53 @@ export function initSentry(): void {
   });
 }
 
+/**
+ * Tags, not extra: Sentry indexes tags, so "every error for this org" or
+ * "every make_call failure" is one filter.
+ */
+type ErrorTags = Record<string, string | undefined>;
+
+function toTags(tags: ErrorTags): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(tags)) {
+    // Sentry caps tag values at 200 characters.
+    if (value) out[key] = maskString(value).slice(0, 200);
+  }
+  return out;
+}
+
 /** Report an error without letting a reporting failure affect the request. */
-export function captureError(error: unknown, context: Record<string, unknown> = {}): void {
+export function captureError(error: unknown, tags: ErrorTags = {}, extra: Record<string, unknown> = {}): void {
   try {
-    Sentry.captureException(error, { extra: redact(context) as Record<string, unknown> });
+    Sentry.captureException(error, {
+      tags: toTags(tags),
+      extra: redact(extra) as Record<string, unknown>,
+    });
   } catch {
     // Never let the reporter break the thing it is reporting on.
+  }
+}
+
+/**
+ * An upstream 5xx. Tools return it as text rather than throwing, so without
+ * this the most likely production failure never reaches Sentry. Grouped by
+ * upstream and status, not by call, so an outage is one issue.
+ */
+export function captureUpstreamError(upstream: string, status: number): void {
+  try {
+    const context = optionalContext();
+    Sentry.captureMessage(`${upstream} returned ${status}`, {
+      level: "error",
+      fingerprint: ["upstream", upstream, String(status)],
+      tags: toTags({
+        upstream,
+        status: String(status),
+        requestId: context?.requestId,
+        orgId: context?.orgId,
+      }),
+    });
+  } catch {
+    // Same reasoning as captureError.
   }
 }
 

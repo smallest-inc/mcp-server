@@ -1,7 +1,9 @@
 import * as Sentry from "@sentry/node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { captureError, initSentry, redact } from "../sentry.js";
+import { runWithContext } from "../context.js";
+import { captureError, captureUpstreamError, initSentry, redact } from "../sentry.js";
+import { describeUpstreamError, onUpstreamError } from "../upstream-error.js";
 
 describe("Sentry redaction", () => {
   it("masks an API key wherever it appears in a string", () => {
@@ -102,6 +104,26 @@ describe("Sentry redaction", () => {
     expect(out.fine).toBe("ok");
   });
 
+  it("drops the credential fields OAuth and connector headers use", () => {
+    const out = redact({
+      "Proxy-Authorization": "Basic abc",
+      "X-Auth-Token": "t",
+      client_secret: "s",
+      refresh_token: "r",
+      id_token: "i",
+      password: "p",
+      secret: "x",
+    }) as Record<string, unknown>;
+
+    for (const value of Object.values(out)) expect(value).toBe("[redacted]");
+  });
+
+  it("masks E.164 phone numbers, which upstream validation errors can echo", () => {
+    expect(redact("invalid callee +919876543210 for agent a1")).toBe("invalid callee +[redacted] for agent a1");
+    // A bare number with no + is not E.164 and is left alone (ids, timestamps).
+    expect(redact("took 1727600000123 ms")).toBe("took 1727600000123 ms");
+  });
+
   it("leaves ordinary values untouched", () => {
     expect(redact({ n: 1, b: true, s: "hello", nil: null })).toEqual({
       n: 1,
@@ -155,10 +177,14 @@ describe("Sentry end to end", () => {
     };
 
     const key = "sk_live_a1b2c3d4e5f6g7h8";
-    captureError(new Error(`upstream rejected ${key}`), {
-      headers: { Authorization: `Bearer ${key}` },
-      nested: [{ url: `https://x/y?token=${key}` }],
-    });
+    captureError(
+      new Error(`upstream rejected ${key}`),
+      { requestId: "req-1" },
+      {
+        headers: { Authorization: `Bearer ${key}` },
+        nested: [{ url: `https://x/y?token=${key}` }],
+      }
+    );
     await Sentry.flush(2_000);
 
     expect(envelopes.length).toBeGreaterThan(0);
@@ -167,5 +193,94 @@ describe("Sentry end to end", () => {
     expect(wire).toContain("sk_[redacted]");
 
     (client as any)._transport = original;
+  });
+
+  function interceptTransport(): string[] {
+    const envelopes: string[] = [];
+    (Sentry.getClient() as any)._transport = {
+      send: async (envelope: unknown) => {
+        envelopes.push(JSON.stringify(envelope));
+        return {};
+      },
+      flush: async () => true,
+    };
+    return envelopes;
+  }
+
+  it("tags the environment from SENTRY_ENVIRONMENT, not NODE_ENV", () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    // The image sets NODE_ENV=production in dev too.
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SENTRY_ENVIRONMENT", "development");
+    vi.stubEnv("SENTRY_RELEASE", "abc1234");
+    initSentry();
+
+    const options = Sentry.getClient()?.getOptions();
+    expect(options?.environment).toBe("development");
+    expect(options?.release).toBe("abc1234");
+    expect(options?.dataCollection).toMatchObject({ httpHeaders: false, httpBodies: [], stackFrameVariables: false });
+  });
+
+  it("sends request, org and tool as tags, which Sentry indexes", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry();
+    const envelopes = interceptTransport();
+
+    captureError(new Error("boom"), { requestId: "req-9", orgId: "org-9", tool: "make_call" });
+    await Sentry.flush(2_000);
+
+    const wire = envelopes.join("");
+    expect(wire).toMatch(/"tags":\{[^}]*"requestId":"req-9"/);
+    expect(wire).toContain('"orgId":"org-9"');
+    expect(wire).toContain('"tool":"make_call"');
+  });
+
+  it("groups upstream 5xx by upstream and status, with the caller's ids", async () => {
+    vi.stubEnv("SENTRY_DSN", "https://examplePublicKey@o0.ingest.sentry.io/0");
+    initSentry();
+    const envelopes = interceptTransport();
+
+    runWithContext(
+      { apiKey: "k", apiUrl: "a", wavesUrl: "w", paymentsUrl: "p", requestId: "req-5", orgId: "org-5" },
+      () => captureUpstreamError("Payments API", 502)
+    );
+    await Sentry.flush(2_000);
+
+    const wire = envelopes.join("");
+    expect(wire).toContain('"fingerprint":["upstream","Payments API","502"]');
+    expect(wire).toContain('"requestId":"req-5"');
+  });
+});
+
+describe("upstream error hook", () => {
+  afterEach(() => {
+    onUpstreamError(null);
+    vi.restoreAllMocks();
+  });
+
+  it("reports a hosted 5xx and nothing else", () => {
+    const reported: Array<[string, number]> = [];
+    onUpstreamError((upstream, status) => reported.push([upstream, status]));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const hosted = { apiKey: "k", apiUrl: "a", wavesUrl: "w", paymentsUrl: "p" };
+    runWithContext(hosted, () => describeUpstreamError("API", 503, null));
+    runWithContext(hosted, () => describeUpstreamError("API", 404, null));
+    // stdio's key owner sees the detail; there is no Sentry there.
+    runWithContext({ ...hosted, localCaller: true }, () => describeUpstreamError("API", 500, null));
+
+    expect(reported).toEqual([["API", 503]]);
+  });
+
+  it("never lets a failing reporter change the caller's answer", () => {
+    onUpstreamError(() => {
+      throw new Error("reporter down");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const message = runWithContext({ apiKey: "k", apiUrl: "a", wavesUrl: "w", paymentsUrl: "p" }, () =>
+      describeUpstreamError("API", 502, null)
+    );
+    expect(message).toBe("API error 502: the upstream service failed");
   });
 });
