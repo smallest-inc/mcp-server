@@ -130,6 +130,14 @@ Edits are saved to a branch's **draft** (agents use the branch/revision model). 
 Only `ATOMS_API_KEY` is needed for normal use. The three base URLs exist so the
 server can be pointed at a non-production environment.
 
+The hosted HTTP server (`dist/http.js`) takes each caller's key from the
+`Authorization` header instead of `ATOMS_API_KEY`, and needs these to verify it:
+
+| Variable | Required | Description |
+|---|---|---|
+| `CONSOLE_BACKEND_URL` | Yes | console-backend base **including its API prefix**, e.g. `http://console-backend/console/v1`. Keys are checked at `<base>/user/token`, so a base without `/console/v1` (or `/api/v1`) answers 404 and every request fails. |
+| `CONSOLE_API_KEY` | Yes | The service key console-backend accepts in `X-API-Key`. |
+
 ## Development
 
 ```bash
