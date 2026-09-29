@@ -629,7 +629,11 @@ describe("hosted HTTP transport", () => {
     );
 
     // Without isError the model reads the error as data instead of retrying.
-    expect(JSON.parse(await res.text()).result.isError).toBe(true);
+    const result = JSON.parse(await res.text()).result;
+    expect(result.isError).toBe(true);
+    // Hosted, asking for a local path would only earn a second rejection.
+    expect(result.content[0].text).toContain("audio_url is required");
+    expect(result.content[0].text).not.toContain("path on their machine");
   });
 
   it("honours audio_url even when a file_path is also supplied", async () => {
