@@ -45,6 +45,9 @@ export function registerTranscribeAudio(
           ),
         audio_url: z
           .string()
+          .url()
+          // Waves fetches this server side, so only web URLs, never file: or ftp:.
+          .refine((value) => /^https?:\/\//i.test(value), "audio_url must be an http or https URL")
           .optional()
           .describe("Publicly accessible URL of an audio file. Either file_path or audio_url is required."),
         language: z
@@ -93,6 +96,7 @@ export function registerTranscribeAudio(
 
       if (!params.file_path && !params.audio_url) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,
@@ -142,6 +146,7 @@ export function registerTranscribeAudio(
           fileBuffer = await readFile(filePath);
         } catch (err: any) {
           return {
+            isError: true,
             content: [
               {
                 type: "text" as const,
@@ -186,6 +191,7 @@ export function registerTranscribeAudio(
 
       if (!response.ok) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,

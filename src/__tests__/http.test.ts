@@ -597,6 +597,41 @@ describe("hosted HTTP transport", () => {
     expect(body).toContain("isError");
   });
 
+  it("refuses an audio_url that is not a web URL before calling Waves", async () => {
+    const upstream = stubUpstreams();
+
+    const res = await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: { name: "transcribe_audio", arguments: { audio_url: "file:///etc/passwd", language: "en" } },
+      },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+    const body = await res.text();
+
+    expect(body).toMatch(/isError|-32602/);
+    expect(upstream.some((c) => c.url.includes("/pulse/get_text"))).toBe(false);
+  });
+
+  it("marks a missing audio source as a failed call", async () => {
+    stubUpstreams();
+
+    const res = await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: { name: "transcribe_audio", arguments: { language: "en" } },
+      },
+      { Authorization: "Bearer sk_live0000000000000000000000000000" }
+    );
+
+    // Without isError the model reads the error as data instead of retrying.
+    expect(JSON.parse(await res.text()).result.isError).toBe(true);
+  });
+
   it("honours audio_url even when a file_path is also supplied", async () => {
     const upstream = stubUpstreams();
 
