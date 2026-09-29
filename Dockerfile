@@ -35,6 +35,10 @@ WORKDIR /app
 # declared engines range allows, and every pod crash-loops at startup.
 RUN printf '{"type":"module"}' > package.json
 
+# The commit SHA, so Sentry can name the build that introduced an error.
+ARG GIT_SHA=unknown
+ENV SENTRY_RELEASE=$GIT_SHA
+
 # node:22-alpine ships an unprivileged `node` user; use it rather than root.
 COPY --from=builder --chown=node:node /app/dist/http.js ./http.js
 

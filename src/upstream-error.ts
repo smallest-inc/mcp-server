@@ -1,5 +1,18 @@
 import { isHosted } from "./context.js";
 
+type UpstreamErrorReporter = (upstream: string, status: number) => void;
+
+let reportUpstreamError: UpstreamErrorReporter | null = null;
+
+/**
+ * The hosted entrypoint plugs Sentry in here. This module is in the stdio
+ * bundle, which leaves npm packages external and does not ship @sentry/node,
+ * so importing the SDK here would break every npx install.
+ */
+export function onUpstreamError(reporter: UpstreamErrorReporter | null): void {
+  reportUpstreamError = reporter;
+}
+
 /**
  * Turn an upstream failure into something safe to hand the caller.
  *
@@ -28,6 +41,11 @@ export function describeUpstreamError(label: string, status: number, data: unkno
         body: JSON.stringify(data)?.slice(0, 500),
       })
     );
+    try {
+      reportUpstreamError?.(label, status);
+    } catch {
+      // Reporting must never change what the caller gets back.
+    }
     return `${label} error ${status}: the upstream service failed`;
   }
 
