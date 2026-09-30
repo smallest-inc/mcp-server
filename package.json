@@ -45,7 +45,7 @@
     "esbuild": "^0.24.0",
     "express": "^5.2.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.4.5",
+    "typescript": "^7.0.2",
     "vitest": "^3.2.7"
   },
   "engines": {
