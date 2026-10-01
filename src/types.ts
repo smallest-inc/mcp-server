@@ -207,9 +207,13 @@ export interface ICallTurnStatsDTO {
 
 /** Per-tool-call timing and token cost from GET /conversation/:id (mirrors ICallToolCallDTO) */
 export interface ICallToolCallDTO {
+  name: string;
   toolCallId: string | null;
-  name: string | null;
   timestamp: string | null;
+  /** api_call | client_tool | knowledge_base_search; null on older calls. */
+  type: string | null;
+  /** HTTP method and template URL ({{param}} placeholders) for api_call tools. */
+  method: string | null;
   url: string | null;
   executionMs: number | null;
   contextTokens: number | null;
