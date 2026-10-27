@@ -8,7 +8,7 @@
 # Pinned by digest (the multi-arch index) so the same commit always builds on the
 # same Node and Alpine patch; the tag stays for readability and Dependabot bumps
 # both lines together.
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS builder
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 
 WORKDIR /app
 
@@ -29,7 +29,7 @@ RUN npm run type-check && npm run build:http
 # One bundled file. No package manager, no dependency tree, nothing from the
 # build layers.
 # ============================================
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS runtime
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
 
 WORKDIR /app
 
