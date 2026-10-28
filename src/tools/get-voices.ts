@@ -31,8 +31,12 @@ export function registerGetVoices(server: McpServer) {
     "get_voices",
     {
       description:
-        "List available voices for agents. Returns voice IDs, names, gender, language, and supported models. Use the voiceId with update_agent's synthesizer.voiceConfig to change an agent's voice. A voice whose supportedModels include 'lightning-v3.1-pro' is a Lightning V3.1 Pro voice (use it with the waves_lightning_v3_1 model). Optionally include your organization's cloned voices.",
+        "List available voices for agents. Returns up to 50 voices by default; use limit and offset to page while hasMore is true. Filter by name, model, gender, or language. Use voiceId with update_agent's synthesizer.voiceConfig. Optionally include your organization's cloned voices; gender and language filters apply to catalog voices only.",
       inputSchema: {
+        limit: z.number().int().min(1).max(200).default(50).describe("Maximum voices per page (1–200)"),
+        offset: z.number().int().min(0).default(0).describe("Number of matching voices to skip"),
+        name: z.string().optional().describe("Case-insensitive substring of voice name or ID"),
+        model: z.string().optional().describe("Case-insensitive exact supported model ID"),
         gender: z
           .enum(["male", "female"])
           .optional()
@@ -68,23 +72,15 @@ export function registerGetVoices(server: McpServer) {
         );
       }
 
-      const mapped = voices.map((v) => ({
-        voiceId: v.voiceId,
-        displayName: v.displayName,
-        description: v.description,
-        gender: v.tags?.gender ?? null,
-        languages: v.tags?.language ?? [],
-        accent: v.tags?.accent ?? null,
-        age: v.tags?.age ?? null,
-        usecases: v.tags?.usecases ?? [],
-        supportedModels: v.modelIds ?? [],
-        audioPreview: v.audioPreview,
-      }));
-
-      const output: Record<string, unknown> = {
-        count: mapped.length,
-        voices: mapped,
+      const matchesCommonFilters = (v: { voiceId: string; displayName: string; modelIds?: string[] }) => {
+        const name = params.name?.toLowerCase();
+        const model = params.model?.toLowerCase();
+        return (!name || v.displayName.toLowerCase().includes(name) || v.voiceId.toLowerCase().includes(name)) &&
+          (!model || v.modelIds?.some((id) => id.toLowerCase() === model));
       };
+      voices = voices.filter(matchesCommonFilters);
+      let clones: IWavesClonedVoice[] = [];
+      let clonedVoicesError: string | undefined;
 
       // Optionally fetch cloned voices
       if (params.include_cloned) {
@@ -92,24 +88,40 @@ export function registerGetVoices(server: McpServer) {
 
         if (clonedResult.ok) {
           const clonedVoices = (clonedResult.data?.data ?? []) as IWavesClonedVoice[];
-          const readyClones = clonedVoices.filter((v) => v.status === "ready" || v.status === "completed");
-
-          output.clonedVoices = readyClones.map((v) => ({
-            voiceId: v.voiceId,
-            displayName: v.displayName,
-            supportedModels: v.modelIds ?? [],
-          }));
-          output.clonedCount = readyClones.length;
+          clones = clonedVoices.filter((v) => (v.status === "ready" || v.status === "completed") && matchesCommonFilters(v));
         } else {
-          output.clonedVoicesError = `Failed to fetch cloned voices: ${formatWavesApiError(clonedResult)}`;
+          clonedVoicesError = `Failed to fetch cloned voices: ${formatWavesApiError(clonedResult)}`;
         }
+      }
+
+      // Page the combined result, so cloned voices cannot bypass the response limit.
+      const total = voices.length + clones.length;
+      const limit = params.limit ?? 50;
+      const offset = params.offset ?? 0;
+      const page = [...voices.map((voice) => ({ voice, cloned: false as const })),
+        ...clones.map((voice) => ({ voice, cloned: true as const }))].slice(offset, offset + limit);
+      const compact = (v: { voiceId: string; displayName: string; modelIds?: string[] }) => ({
+        voiceId: v.voiceId,
+        displayName: v.displayName,
+        supportedModels: v.modelIds ?? [],
+      });
+      const output: Record<string, unknown> = {
+        count: page.filter((v) => !v.cloned).length,
+        total,
+        hasMore: offset + page.length < total,
+        voices: page.filter((v) => !v.cloned).map(({ voice }) => compact(voice)),
+      };
+      if (params.include_cloned) {
+        output.clonedVoices = page.filter((v) => v.cloned).map(({ voice }) => compact(voice));
+        output.clonedCount = clones.length;
+        if (clonedVoicesError) output.clonedVoicesError = clonedVoicesError;
       }
 
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(output, null, 2),
+            text: JSON.stringify(output),
           },
         ],
       };
