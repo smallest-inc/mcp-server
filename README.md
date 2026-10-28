@@ -69,10 +69,17 @@ Reload your editor, then type: **"List all my agents"**
 | `get_usage_stats` | Usage statistics — total calls, duration, costs, status breakdown |
 | `get_campaigns` | List outbound calling campaigns with status and progress |
 | `get_phone_numbers` | List phone numbers owned by your organization |
-| `get_voices` | List available voices with gender, language, and model filters |
+| `get_voices` | List available voices with name, gender, language, and model filters; paginate using `limit` and `offset` |
 | `get_playbooks` | Read a multi-agent (Playbooks) agent's SOPs, intent router, and shared auth tools |
 | `get_branch_draft` | View a branch's pending (unpublished) draft changes |
 | `get_revision` | Get a single committed revision's metadata and resolved config |
+
+`get_voices` returns at most 50 voices by default (maximum 200). Use `total` and
+`hasMore` to page through matching results with `offset`. When `include_cloned`
+is enabled, catalog and cloned voices share the same page limit; `total`
+includes both. Name and model filters apply to both groups; gender and language
+filters apply to catalog voices only, because cloned voices do not provide
+those attributes. Responses include voice IDs, names, and supported models.
 
 ### Write
 
